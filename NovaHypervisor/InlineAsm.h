@@ -4,7 +4,7 @@
 extern "C" {
 	void inline AsmRestoreToVmxOffState();
 	NTSTATUS inline AsmVmxVmcall(unsigned long long VmcallNumber, unsigned long long OptionalParam1, unsigned long long OptionalParam2, unsigned long long OptionalParam3);
-	UINT64 inline  AsmHypervVmcall(unsigned long long HypercallInputValue, unsigned long long InputParamGPA, unsigned long long OutputParamGPA);
+	UINT64 inline AsmHypervVmcall(unsigned long long GuestRegisters);
 	void AsmVmxSaveState();
 	void AsmVmxRestoreState();
 
