@@ -103,6 +103,14 @@ void RegistersHandler::HandleCRAccess(_In_ PGUEST_REGS guestRegisters) {
 void RegistersHandler::HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters) {
 	MSR msr = { 0 };
 
+	// Hyper-V synthetic MSRs - pass through transparently to the real hypervisor (TLFS 2.4)
+	if (IsHyperVSyntheticMsr(guestRegisters->rcx)) {
+		msr.Content = __readmsr(guestRegisters->rcx);
+		guestRegisters->rax = static_cast<ULONG64>(msr.Low);
+		guestRegisters->rdx = static_cast<ULONG64>(msr.High);
+		return;
+	}
+
 	if (IsValidMsr(guestRegisters->rcx))
 		msr.Content = __readmsr((ULONG)guestRegisters->rcx);
 
@@ -121,11 +129,20 @@ void RegistersHandler::HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters) {
 * There is no return value
 */
 void RegistersHandler::HandleMSRWrite(_In_ PGUEST_REGS guestRegisters) {
+	// Hyper-V synthetic MSRs - pass through transparently to the real hypervisor (TLFS 2.4)
+	if (IsHyperVSyntheticMsr(guestRegisters->rcx)) {
+		MSR msr = { 0 };
+		msr.Low = static_cast<ULONG>(guestRegisters->rax);
+		msr.High = static_cast<ULONG>(guestRegisters->rdx);
+		__writemsr(static_cast<ULONG>(guestRegisters->rcx), msr.Content);
+		return;
+	}
+
 	if (IsValidMsr(guestRegisters->rcx)) {
 		MSR msr = { 0 };
-		msr.Low = (ULONG)guestRegisters->rax;
-		msr.High = (ULONG)guestRegisters->rdx;
-		__writemsr((ULONG)guestRegisters->rcx, msr.Content);
+		msr.Low = static_cast<ULONG>(guestRegisters->rax);
+		msr.High = static_cast<ULONG>(guestRegisters->rdx);
+		__writemsr(static_cast<ULONG>(guestRegisters->rcx), msr.Content);
 	}
 }
 
@@ -142,17 +159,13 @@ void RegistersHandler::HandleMSRWrite(_In_ PGUEST_REGS guestRegisters) {
 void RegistersHandler::HandleCpuid(_Inout_ PGUEST_REGS guestRegisters) {
 	int cpuInfo[4] = { 0 };
 
-	__cpuidex(cpuInfo, (int)guestRegisters->rax, (int)guestRegisters->rcx);
+	__cpuidex(cpuInfo, static_cast<int>(guestRegisters->rax), static_cast<int>(guestRegisters->rcx));
 
-	// If rax is 1, then need to set the hypervisor present bit. 
-	// If it is cpuid_interface then need to return the interface identifier.
-	if (guestRegisters->rax == CPUID_PROCESSOR_AND_PROCESSOR_FEATURE_IDENTIFIERS)
+	if (guestRegisters->rax == CPUID_PROCESSOR_AND_PROCESSOR_FEATURE_IDENTIFIERS) {
 		cpuInfo[2] |= HYPERV_HYPERVISOR_PRESENT_BIT;
-	else if (guestRegisters->rax == HYPERV_CPUID_INTERFACE)
-		cpuInfo[0] = '0#vH'; // For hyperv support.
-	else if (guestRegisters->rax == HYPERV_CPUID_VENDOR_AND_MAX_FUNCTIONS) {
-		cpuInfo[0] = HYPERV_CPUID_INTERFACE;
-		cpuInfo[1] = HYPERVISOR_INTERFACE;
+	}
+	else if (guestRegisters->rax == HYPERV_CPUID_INTERFACE) {
+		cpuInfo[0] = '0#vH';
 	}
 
 	guestRegisters->rax = cpuInfo[0];
