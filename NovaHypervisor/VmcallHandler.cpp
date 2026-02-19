@@ -67,3 +67,41 @@ NTSTATUS VmcallHandler(_In_ UINT64 vmcallNumber, _In_opt_ UINT64 optionalParam1,
 	}
 	return status;
 }
+
+/*
+* Description:
+* HypercallHandler is responsible for handling Hyper-V's hypercalls.
+*
+* Parameters:
+* @eptInstance [_In_ Ept*]			 -- EPT instance of a VM.
+* @registers   [_Inout_ PGUEST_REGS] -- VM's registers.
+*
+* Returns:
+* @status	   [NTSTATUS]			 -- The function returns the status of the operation.
+*/
+NTSTATUS HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers) {
+	if (!eptInstance || !registers)
+		return STATUS_INVALID_PARAMETER;
+	HYPERCALL_INPUT_VALUE hypercall = { 0 };
+	hypercall.Flags = registers->rcx;
+
+	switch (hypercall.Fields.CallCode)
+	{
+		case HvSwitchVirtualAddressSpace:
+		case HvFlushVirtualAddressSpace:
+		case HvFlushVirtualAddressList:
+		case HvCallFlushVirtualAddressSpaceEx:
+		case HvCallFlushVirtualAddressListEx:
+			VmxHelper::InvalidateVpid();
+			break;
+
+	case HvCallFlushGuestPhysicalAddressSpace:
+	case HvCallFlushGuestPhysicalAddressList:
+		VmxHelper::InvalidateEpt(eptInstance->GetEptPointerFlags());
+		break;
+	}
+	UINT64 guestRsp = registers->rsp;
+	AsmHypervVmcall(reinterpret_cast<UINT64>(registers));
+	registers->rsp = guestRsp;
+	return STATUS_SUCCESS;
+}

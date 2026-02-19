@@ -49,6 +49,11 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters) {
 			break;
 		}
 
+		case EXIT_REASON_HLT: {
+			// __halt(); // We don't want to halt.
+			break;
+		}
+
 		case EXIT_REASON_VMCLEAR:
 		case EXIT_REASON_VMPTRLD:
 		case EXIT_REASON_VMPTRST:
@@ -105,7 +110,20 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters) {
 			if (IsSelfVmcall(guestRegisters->r10, guestRegisters->r11, guestRegisters->r12))
 				guestRegisters->rax = VmcallHandler(guestRegisters->rcx, guestRegisters->rdx, guestRegisters->r8, guestRegisters->r9);
 			else
-				guestRegisters->rax = AsmHypervVmcall(guestRegisters->rcx, guestRegisters->rdx, guestRegisters->r8);
+				guestRegisters->rax = HypercallHandler(currentEptInstance, guestRegisters);
+			break;
+		}
+		case EXIT_REASON_XSETBV: {
+			_xsetbv(static_cast<ULONG>(guestRegisters->rcx),
+				(guestRegisters->rdx << 32) | (guestRegisters->rax & 0xFFFFFFFF));
+			break;
+		}
+		case EXIT_REASON_INVD: {
+			__wbinvd();
+			break;
+		}
+		case EXIT_REASON_UMONITOR:
+		case EXIT_REASON_UMWAIT: {
 			break;
 		}
 		default: {

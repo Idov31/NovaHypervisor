@@ -10,11 +10,32 @@
 
 NovaHypervisor is a defensive x64 Intel host based hypervisor. The goal of this project is to protect against kernel based attacks (either via Bring Your Own Vulnerable Driver (BYOVD) or other means) by safeguarding defense products (AntiVirus / Endpoint Protection) and kernel memory structures and preventing unauthorized access to kernel memory.
 
-NovaHypervisor is written in C++ and Assembly, and is designed to be compatible with Hyper-V and run on Windows 10 and later versions. Please see the [setup](#setup) section for more information on how to use it.
+NovaHypervisor is written in C++ and Assembly, and is designed to be compatible to run on Windows 10 and later versions. Please see the [setup](#setup) section for more information on how to use it.
 
-> [!WARNING]  
-> This project is in a very early stage of development and is not yet ready for production use. It is intended for educational purposes and to demonstrate the concepts of a defensive hypervisor.
-> The project has been tested on the latest Windows 10, and while it should work on Windows 11, it has not been tested on that version yet.
+> [!IMPORTANT]  
+> The hypervisor was tested on Windows 11 25H2 and multiple Windows 10 versions.
+> If you encounter a problem, please open an issue after checking there isn't already an open issue.
+
+## Supported Hypervisors
+
+NovaHypervisor can run under these hypervisors:
+
+### Legend
+
+✅ - Supported and tested
+
+⌛ - Work in progress
+
+❌ - Not supported and not planned to be supported
+
+| Hypervisor | Supported |
+|------------|-----------|
+| VMware     | ✅        |
+| Hyper-V    | ✅        |
+| Hyper-V with VBS | ⌛  |
+| VirtualBox | ❌        |
+| QEMU       | ❌        |
+| KVM        | ❌        |
 
 ## Usage
 
@@ -96,9 +117,13 @@ Where `<HOSTIP>` is the IP address of your host machine.
 
 ## Resources
 
-[Hypervisor From Scratch](https://rayanfam.com/topics/hypervisor-from-scratch-part-1/)
+- [Hypervisor From Scratch](https://rayanfam.com/topics/hypervisor-from-scratch-part-1/)
 
-[HyperDbg](https://github.com/HyperDbg/HyperDbg)
+- [HyperDbg](https://github.com/HyperDbg/HyperDbg)
+
+- [QEMU](https://www.qemu.org/)
+
+- [TLFS](https://raw.githubusercontent.com/Microsoft/Virtualization-Documentation/master/tlfs/Hypervisor%20Top%20Level%20Functional%20Specification%20v5.0.pdf)
 
 ## Personal Thanks & Contributors
 

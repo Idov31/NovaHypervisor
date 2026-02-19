@@ -8,6 +8,11 @@
 
 constexpr int HYPERVISOR_INTERFACE = 'AVON';
 
+// Hyper-V synthetic MSR range check
+inline bool IsHyperVSyntheticMsr(_In_ ULONG64 msr) {
+	return msr >= 0x40000000 && msr <= 0x40000105;
+}
+
 namespace RegistersHandler {
 	bool IsValidMsr(_In_ ULONG64 rcx);
 	void HandleCRAccess(_In_ PGUEST_REGS guestRegisters);

@@ -57,13 +57,15 @@ void TerminateVmx() {
 	KeGenericCallDpc(TerminateGuest, 0x0);
 	ULONG processorCount = KeQueryActiveProcessorCount(0);
 
-	for (ULONG i = 0; i < processorCount; i++) {
-		if (GuestState[i].EptInstance) {
-			delete GuestState[i].EptInstance;
-			GuestState[i].EptInstance = nullptr;
+	if (GuestState) {
+		for (ULONG i = 0; i < processorCount; i++) {
+			if (GuestState[i].EptInstance) {
+				delete GuestState[i].EptInstance;
+				GuestState[i].EptInstance = nullptr;
+			}
 		}
+		FreeVirtualMemory(GuestState);
 	}
-	FreeVirtualMemory(GuestState);
 }
 
 /*
@@ -215,17 +217,19 @@ bool VmxTerminate() {
 	if (!NT_SUCCESS(status))
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to execute vmcall to turn off vmx");
 
-	if (GuestState[currentProcessorIndex].VmxonRegion != 0) {
-		MmFreeContiguousMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].VmxonRegion));
-		GuestState[currentProcessorIndex].VmxonRegion = 0;
-	}
+	if (GuestState) {
+		if (GuestState[currentProcessorIndex].VmxonRegion != 0) {
+			MmFreeContiguousMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].VmxonRegion));
+			GuestState[currentProcessorIndex].VmxonRegion = 0;
+		}
 
-	if (GuestState[currentProcessorIndex].VmcsRegion != 0) {
-		MmFreeContiguousMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].VmcsRegion));
-		GuestState[currentProcessorIndex].VmcsRegion = 0;
+		if (GuestState[currentProcessorIndex].VmcsRegion != 0) {
+			MmFreeContiguousMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].VmcsRegion));
+			GuestState[currentProcessorIndex].VmcsRegion = 0;
+		}
+		FreeVirtualMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].VmmStack));
+		FreeVirtualMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].MsrBitmap));
 	}
-	FreeVirtualMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].VmmStack));
-	FreeVirtualMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].MsrBitmap));
 	return NT_SUCCESS(status);
 }
 
@@ -286,13 +290,17 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	__vmx_vmwrite(GUEST_GS_BASE, __readmsr(MSR_GS_BASE));
 
 	
-	ULONG cpuBasedVmExecControls = VmxHelper::AdjustControls(CPU_BASED_ACTIVATE_MSR_BITMAP | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS, 
+	ULONG cpuBasedVmExecControls = VmxHelper::AdjustControls(
+		CPU_BASED_ACTIVATE_MSR_BITMAP | 
+		CPU_BASED_ACTIVATE_SECONDARY_CONTROLS, 
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_PROCBASED_CTLS : MSR_IA32_VMX_PROCBASED_CTLS);
 	__vmx_vmwrite(CPU_BASED_VM_EXEC_CONTROL, cpuBasedVmExecControls);
 	NovaHypervisorLog(TRACE_FLAG_DEBUG, "CPU Based VM Exec Controls (Based on MSR_IA32_VMX_PROCBASED_CTLS) : 0x%x", cpuBasedVmExecControls);
 
-	ULONG secondaryProcBasedVmExecControls = VmxHelper::AdjustControls(CPU_BASED_CTL2_RDTSCP | CPU_BASED_CTL2_ENABLE_EPT | 
-		CPU_BASED_CTL2_ENABLE_INVPCID | CPU_BASED_CTL2_ENABLE_XSAVE_XRSTORS | CPU_BASED_CTL2_ENABLE_VPID,
+	ULONG secondaryProcBasedVmExecControls = VmxHelper::AdjustControls(
+		CPU_BASED_CTL2_RDTSCP | CPU_BASED_CTL2_ENABLE_EPT | 
+		CPU_BASED_CTL2_ENABLE_INVPCID | CPU_BASED_CTL2_ENABLE_XSAVE_XRSTORS | CPU_BASED_CTL2_ENABLE_VPID |
+		CPU_BASED_CTL2_ENABLE_USER_WAIT_AND_PAUSE,
 		MSR_IA32_VMX_PROCBASED_CTLS2);
 
 	__vmx_vmwrite(SECONDARY_VM_EXEC_CONTROL, secondaryProcBasedVmExecControls);
