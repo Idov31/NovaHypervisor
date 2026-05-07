@@ -7,11 +7,12 @@
 *
 * Parameters:
 * @guestRegisters [_Inout_ PGUEST_REGISTERS] -- The guest registers.
+* @guestFxState   [_In_ UINT64]				 -- The guest FPU state.
 *
 * Returns:
 * @bool										 -- The function returns true if vmxoff was executed, otherwise false.
 */
-bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters) {
+bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState) {
 	SIZE_T exitReason = 0;
 	SIZE_T exitQualification = 0;
 	ULONG currentProcessorIndex = KeGetCurrentProcessorNumber();
@@ -107,10 +108,11 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters) {
 			break;
 		}
 		case EXIT_REASON_VMCALL: {
+			guestRegisters->rax = static_cast<UINT64>(STATUS_SUCCESS);
 			if (IsSelfVmcall(guestRegisters->r10, guestRegisters->r11, guestRegisters->r12))
 				guestRegisters->rax = VmcallHandler(guestRegisters->rcx, guestRegisters->rdx, guestRegisters->r8, guestRegisters->r9);
-			else
-				guestRegisters->rax = HypercallHandler(currentEptInstance, guestRegisters);
+			else if (!HypercallHandler(currentEptInstance, guestRegisters, guestFxState))
+				guestRegisters->rax = static_cast<UINT64>(STATUS_INVALID_PARAMETER);
 			break;
 		}
 		case EXIT_REASON_XSETBV: {
@@ -142,7 +144,7 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters) {
 
 /*
 * Description:
-* VmResumeInstruction is responsible for calling the VMRESUME instruction.
+* VmResumeFailure is called only when the assembly VMRESUME instruction fails.
 *
 * Parameters:
 * There are no parameters.
@@ -150,9 +152,7 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters) {
 * Returns:
 * There is no return value.
 */
-void VmResumeInstruction() {
-	__vmx_vmresume();
-
+void VmResumeFailure() {
 	SIZE_T errorCode = 0;
 	__vmx_vmread(VM_INSTRUCTION_ERROR, &errorCode);
 	__vmx_off();

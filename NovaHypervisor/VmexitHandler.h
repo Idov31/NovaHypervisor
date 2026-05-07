@@ -16,6 +16,6 @@ constexpr auto IsSelfVmcall = [](ULONG64 r10, ULONG64 r11, ULONG64 r12) -> bool 
 };
 
 extern "C" {
-	void VmResumeInstruction();
-	bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters);
+	void VmResumeFailure();
+	bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState);
 }

@@ -77,11 +77,11 @@ NTSTATUS VmcallHandler(_In_ UINT64 vmcallNumber, _In_opt_ UINT64 optionalParam1,
 * @registers   [_Inout_ PGUEST_REGS] -- VM's registers.
 *
 * Returns:
-* @status	   [NTSTATUS]			 -- The function returns the status of the operation.
+* @status	   [bool]				 -- True if the hypercall was forwarded.
 */
-NTSTATUS HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers) {
+bool HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers, _In_ UINT64 guestFxState) {
 	if (!eptInstance || !registers)
-		return STATUS_INVALID_PARAMETER;
+		return false;
 	HYPERCALL_INPUT_VALUE hypercall = { 0 };
 	hypercall.Flags = registers->rcx;
 
@@ -101,7 +101,7 @@ NTSTATUS HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers) 
 		break;
 	}
 	UINT64 guestRsp = registers->rsp;
-	AsmHypervVmcall(reinterpret_cast<UINT64>(registers));
+	AsmHypervVmcall(reinterpret_cast<UINT64>(registers), guestFxState);
 	registers->rsp = guestRsp;
-	return STATUS_SUCCESS;
+	return true;
 }
