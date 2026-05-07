@@ -167,6 +167,10 @@ void RegistersHandler::HandleCpuid(_Inout_ PGUEST_REGS guestRegisters) {
 	else if (guestRegisters->rax == HYPERV_CPUID_INTERFACE) {
 		cpuInfo[0] = '0#vH';
 	}
+	else if (guestRegisters->rax == HYPERV_CPUID_FEATURES) {
+		cpuInfo[3] &= ~(HYPERV_CPUID_FEATURES_EDX_XMM_FAST_HYPERCALL_INPUT |
+			HYPERV_CPUID_FEATURES_EDX_XMM_FAST_HYPERCALL_OUTPUT);
+	}
 
 	guestRegisters->rax = cpuInfo[0];
 	guestRegisters->rbx = cpuInfo[1];

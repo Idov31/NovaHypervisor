@@ -73,6 +73,19 @@ AsmHypervVmcall PROC
     push rcx
     push rax
 
+    ; Save the FXSAVE frame pointer passed in RDX. Hyper-V may have exposed
+    ; XMM fast hypercalls before Nova was loaded, so CPUID masking alone is not
+    ; enough: forward XMM0-XMM5 from the guest frame and capture any fast-output
+    ; values back into that same frame.
+    push rdx
+
+    movdqu xmm0, xmmword ptr [rdx+0a0h]
+    movdqu xmm1, xmmword ptr [rdx+0b0h]
+    movdqu xmm2, xmmword ptr [rdx+0c0h]
+    movdqu xmm3, xmmword ptr [rdx+0d0h]
+    movdqu xmm4, xmmword ptr [rdx+0e0h]
+    movdqu xmm5, xmmword ptr [rdx+0f0h]
+
     ; Unpacking the registers from rcx
     mov rax, qword ptr [rcx+0h]
     mov rdx, qword ptr [rcx+10h]
@@ -95,10 +108,27 @@ AsmHypervVmcall PROC
 
     vmcall
 
-    ; Restoring the state
-    pop rcx
+    ; Save Hyper-V's returned RAX/RCX before recovering local pointers.
+    push rax
+    push rcx
+    mov rcx, qword ptr [rsp+10h]
 
+    mov rax, qword ptr [rsp+18h]
+    movdqu xmmword ptr [rax+0a0h], xmm0
+    movdqu xmmword ptr [rax+0b0h], xmm1
+    movdqu xmmword ptr [rax+0c0h], xmm2
+    movdqu xmmword ptr [rax+0d0h], xmm3
+    movdqu xmmword ptr [rax+0e0h], xmm4
+    movdqu xmmword ptr [rax+0f0h], xmm5
+
+    ; Copy the guest-visible post-hypercall state back to the saved VM-exit frame.
+    ; Hyper-V guarantees untouched registers remain unchanged, so copying the full
+    ; GPR set preserves rep hypercall RCX, fast-output RDX/R8, and special cases
+    ; such as HvCallSetVpRegisters without relying on per-call decoding here.
+    mov rax, qword ptr [rsp+08h]
     mov qword ptr [rcx+0h], rax
+    mov rax, qword ptr [rsp]
+    mov qword ptr [rcx+08h], rax
     mov qword ptr [rcx+10h], rdx
     mov qword ptr [rcx+18h], rbx
     mov qword ptr [rcx+28h], rbp
@@ -112,7 +142,10 @@ AsmHypervVmcall PROC
     mov qword ptr [rcx+68h], r13
     mov qword ptr [rcx+70h], r14
     mov qword ptr [rcx+78h], r15
-    mov qword ptr [rcx+08h], rcx
+
+    add rsp, 10h
+    pop rcx
+    add rsp, 08h
 
     pop rax
     pop rcx
