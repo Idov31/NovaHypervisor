@@ -125,7 +125,7 @@ bool VmxInitializer() {
 			GuestState[processorIndex].EptInstance = new Ept();
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER) {
-			NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to create EPT instance for processor 0x%lx: 0x%llx", processorIndex, GetExceptionCode());
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to create EPT instance for processor 0x%lx: 0x%08X", processorIndex, GetExceptionCode());
 			initialized = false;
 			break;
 		}

@@ -37,11 +37,11 @@ NTSTATUS NovaDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
 				reinterpret_cast<UINT64>(hookedPage)));
 
 			if (!NT_SUCCESS(status)) {
-				NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to hook page 0x%llx with permissions 0x%llx (0x%08X)",
+				NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to hook page 0x%llx with permissions 0x%x (0x%08X)",
 					hookedPage->Address, hookedPage->Permissions, status);
 				break;
 			}
-			NovaHypervisorLog(TRACE_FLAG_INFO, "Hooked page 0x%llx with permissions 0x%llx",
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Hooked page 0x%llx with permissions 0x%x",
 				hookedPage->Address, hookedPage->Permissions);
 			break;
 		}
