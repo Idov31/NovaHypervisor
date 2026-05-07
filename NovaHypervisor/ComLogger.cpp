@@ -20,17 +20,17 @@ namespace {
 	volatile LONG g_WriteLock = 0;
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	void WriteRegister(_In_ USHORT offset, _In_ UCHAR value) noexcept {
+		void WriteRegister(_In_ USHORT offset, _In_ UCHAR value) noexcept {
 		__outbyte(static_cast<USHORT>(g_Port + offset), value);
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	UCHAR ReadRegister(_In_ USHORT offset) noexcept {
+		UCHAR ReadRegister(_In_ USHORT offset) noexcept {
 		return __inbyte(static_cast<USHORT>(g_Port + offset));
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	bool WaitUntilTransmitReady() noexcept {
+		bool WaitUntilTransmitReady() noexcept {
 		for (ULONG attempt = 0; attempt < TransmitReadyRetries; ++attempt) {
 			if ((ReadRegister(LineStatusRegister) & LineStatusTransmitEmpty) != 0)
 				return true;
@@ -39,13 +39,13 @@ namespace {
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	void WriteChar(_In_ char value) noexcept {
+		void WriteChar(_In_ char value) noexcept {
 		if (WaitUntilTransmitReady())
 			WriteRegister(0, static_cast<UCHAR>(value));
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	void WriteString(_In_reads_or_z_(maximumLength) const char* value, _In_ SIZE_T maximumLength) noexcept {
+		void WriteString(_In_reads_or_z_(maximumLength) const char* value, _In_ SIZE_T maximumLength) noexcept {
 		if (!value)
 			return;
 
@@ -54,7 +54,7 @@ namespace {
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	bool TryAcquireWriteLock() noexcept {
+		bool TryAcquireWriteLock() noexcept {
 		for (ULONG attempt = 0; attempt < WriteLockRetries; ++attempt) {
 			if (InterlockedCompareExchange(&g_WriteLock, 1, 0) == 0)
 				return true;
@@ -66,12 +66,12 @@ namespace {
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	void ReleaseWriteLock() noexcept {
+		void ReleaseWriteLock() noexcept {
 		InterlockedExchange(&g_WriteLock, 0);
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	void AppendChar(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize, _Inout_ SIZE_T& offset, _In_ char value) noexcept {
+		void AppendChar(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize, _Inout_ SIZE_T& offset, _In_ char value) noexcept {
 		if (!buffer || bufferSize == 0 || offset >= bufferSize - 1)
 			return;
 
@@ -80,8 +80,8 @@ namespace {
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	void AppendString(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize, _Inout_ SIZE_T& offset,
-		_In_reads_or_z_(maximumLength) const char* value, _In_ SIZE_T maximumLength) noexcept {
+		void AppendString(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize, _Inout_ SIZE_T& offset,
+			_In_reads_or_z_(maximumLength) const char* value, _In_ SIZE_T maximumLength) noexcept {
 		if (!value) {
 			value = "(null)";
 			maximumLength = 6;
@@ -92,8 +92,8 @@ namespace {
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	void AppendUnsigned(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize, _Inout_ SIZE_T& offset,
-		_In_ UINT64 value, _In_ ULONG radix, _In_ bool uppercase) noexcept {
+		void AppendUnsigned(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize, _Inout_ SIZE_T& offset,
+			_In_ UINT64 value, _In_ ULONG radix, _In_ bool uppercase) noexcept {
 		char digits[32] = { 0 };
 		SIZE_T digitCount = 0;
 
@@ -108,23 +108,29 @@ namespace {
 			value /= radix;
 		} while (value != 0 && digitCount < RTL_NUMBER_OF(digits));
 
-		for (; digitCount > 0 && digitCount < RTL_NUMBER_OF(digits); --digitCount) {
+		while (digitCount > 0) {
+			--digitCount;
+
+			if (digitCount > RTL_NUMBER_OF(digits))
+				break;
 			AppendChar(buffer, bufferSize, offset, digits[digitCount]);
 		}
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	void AppendSigned(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize, _Inout_ SIZE_T& offset, _In_ INT64 value) noexcept {
+		void AppendSigned(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize, _Inout_ SIZE_T& offset, _In_ INT64 value) noexcept {
+		UINT64 magnitude = static_cast<UINT64>(value);
+
 		if (value < 0) {
 			AppendChar(buffer, bufferSize, offset, '-');
-			value = -value;
+			magnitude = 0 - magnitude;
 		}
 
-		AppendUnsigned(buffer, bufferSize, offset, static_cast<UINT64>(value), 10, false);
+		AppendUnsigned(buffer, bufferSize, offset, magnitude, 10, false);
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	void FormatMessage(_Out_writes_z_(bufferSize) char* buffer, _In_ SIZE_T bufferSize, _In_z_ const char* format, _In_ va_list args) noexcept {
+		void FormatMessage(_Out_writes_z_(bufferSize) char* buffer, _In_ SIZE_T bufferSize, _In_z_ const char* format, _In_ va_list args) noexcept {
 		SIZE_T offset = 0;
 
 		if (!buffer || bufferSize == 0)
@@ -207,7 +213,7 @@ namespace {
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
-	const char* PrefixForLevel(_In_ ComLogger::Level level) noexcept {
+		const char* PrefixForLevel(_In_ ComLogger::Level level) noexcept {
 		switch (level) {
 		case ComLogger::Level::Debug:
 			return "[NovaHypervisor][DEBUG] ";
