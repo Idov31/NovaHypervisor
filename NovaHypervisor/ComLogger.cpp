@@ -5,6 +5,7 @@ namespace {
 
 	constexpr SIZE_T MessageBufferSize = 512;
 	constexpr ULONG TransmitReadyRetries = 100000;
+	constexpr ULONG WriteLockRetries = 100000;
 	constexpr UCHAR LineStatusTransmitEmpty = 0x20;
 
 	constexpr USHORT InterruptEnableRegister = 1;
@@ -15,6 +16,7 @@ namespace {
 	constexpr UCHAR DivisorLatchAccessBit = 0x80;
 
 	volatile USHORT g_Port = ComLogger::DefaultPort;
+	volatile LONG g_WriteLock = 0;
 
 	_IRQL_requires_max_(HIGH_LEVEL)
 	void WriteRegister(_In_ USHORT offset, _In_ UCHAR value) noexcept {
@@ -48,6 +50,23 @@ namespace {
 
 		for (SIZE_T index = 0; index < maximumLength && value[index] != '\0'; ++index)
 			WriteChar(value[index]);
+	}
+
+	_IRQL_requires_max_(HIGH_LEVEL)
+	bool TryAcquireWriteLock() noexcept {
+		for (ULONG attempt = 0; attempt < WriteLockRetries; ++attempt) {
+			if (InterlockedCompareExchange(&g_WriteLock, 1, 0) == 0)
+				return true;
+
+			_mm_pause();
+		}
+
+		return false;
+	}
+
+	_IRQL_requires_max_(HIGH_LEVEL)
+	void ReleaseWriteLock() noexcept {
+		InterlockedExchange(&g_WriteLock, 0);
 	}
 
 	_IRQL_requires_max_(HIGH_LEVEL)
@@ -93,9 +112,13 @@ namespace ComLogger {
 			RtlStringCbCopyA(message, sizeof(message), "null log format string");
 		}
 
+		if (!TryAcquireWriteLock())
+			return;
+
 		WriteString(PrefixForLevel(level), MessageBufferSize);
 		WriteString(message, sizeof(message));
 		WriteString("\r\n", 3);
+		ReleaseWriteLock();
 	}
 
 	void Write(_In_ Level level, _In_z_ const char* format, ...) noexcept {
