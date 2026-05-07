@@ -5,8 +5,7 @@
 #include "GlobalVariables.h"
 #include "MemoryHelper.hpp"
 #include "Vmx.h"
-#include "WppDefinitions.h"
-#include "Ept.tmh"
+#include "ComLogger.h"
 
 enum EptPagePermissions {
 	EPT_PAGE_READ = 1,

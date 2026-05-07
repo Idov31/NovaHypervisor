@@ -5,8 +5,7 @@
 #include "RegistersHandler.h"
 #include "EventInjection.h"
 #include "VmcallHandler.h"
-#include "WppDefinitions.h"
-#include "VmexitHandler.tmh"
+#include "ComLogger.h"
 
 constexpr ULONG64 NO_HYPERV_MAGIC = 0x4e4f485950455256;
 constexpr ULONG64 VMCALL_MAGIC = 0x564d43414c4c;

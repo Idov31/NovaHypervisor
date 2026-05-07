@@ -4,8 +4,7 @@
 #include "InlineAsm.h"
 #include "WindowsDefinitions.h"
 #include "VmState.h"
-#include "WppDefinitions.h"
-#include "VmxHelper.tmh"
+#include "ComLogger.h"
 
 constexpr wchar_t KERNEL_NAME[] = L"ntoskrnl.exe";
 constexpr size_t KERNEL_NAME_LEN = 12;

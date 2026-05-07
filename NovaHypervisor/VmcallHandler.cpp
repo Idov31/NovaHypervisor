@@ -60,7 +60,7 @@ NTSTATUS VmcallHandler(_In_ UINT64 vmcallNumber, _In_opt_ UINT64 optionalParam1,
 			break;
 		}
 		default: {
-			NovaHypervisorLog(TRACE_FLAG_WARNING, "Unsupported vmcall: 0x%llx\n", vmcallNumber);
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Unsupported vmcall: 0x%llx\n", vmcallNumber);
 			status = STATUS_INVALID_PARAMETER;
 			break;
 		}

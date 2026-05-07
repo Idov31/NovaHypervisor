@@ -79,11 +79,11 @@ bool Ept::CheckFeatures() {
 	}
 
 	if (!vpidRegister.AdvancedVmexitEptViolationsInformation)
-		NovaHypervisorLog(TRACE_FLAG_WARNING, "The processor doesn't report advanced vmexit information for EPT violations.");
+		NovaHypervisorLog(TRACE_FLAG_INFO, "The processor doesn't report advanced vmexit information for EPT violations.");
 
 	if (!vpidRegister.ExecuteOnlyPages) {
 		executeOnlySupport = false;
-		NovaHypervisorLog(TRACE_FLAG_WARNING, "The processor doesn't support execute-only pages.");
+		NovaHypervisorLog(TRACE_FLAG_INFO, "The processor doesn't support execute-only pages.");
 	}
 
 	NovaHypervisorLog(TRACE_FLAG_INFO, "All important EPT features are present.");
@@ -692,7 +692,7 @@ bool Ept::PageHook(_In_ PVOID targetFunc, _In_ UINT8 permissions) {
 		}
 	}
 
-	NovaHypervisorLog(TRACE_FLAG_WARNING, "Hook not applied");
+	NovaHypervisorLog(TRACE_FLAG_INFO, "Hook not applied");
 	return false;
 }
 

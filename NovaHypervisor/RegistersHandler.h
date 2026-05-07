@@ -3,8 +3,7 @@
 #include "pch.h"
 #include "HypervisorDefinitions.h"
 #include "VmxHelper.h"
-#include "WppDefinitions.h"
-#include "RegistersHandler.tmh"
+#include "ComLogger.h"
 
 constexpr int HYPERVISOR_INTERFACE = 'AVON';
 

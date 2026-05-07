@@ -127,7 +127,7 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters) {
 			break;
 		}
 		default: {
-			NovaHypervisorLog(TRACE_FLAG_WARNING, "Unkown Vmexit, reason : 0x%llx", exitReason);
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Unknown Vmexit, reason : 0x%llx", exitReason);
 			break;
 		}
 	}

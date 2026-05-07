@@ -3,6 +3,10 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 *.drawio
+*.drawio.bkp
+
+*.md
+!README.md
 
 # User-specific files
 *.rsuser

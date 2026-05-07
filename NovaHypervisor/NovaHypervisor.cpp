@@ -16,7 +16,7 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	if (!NT_SUCCESS(result))
 		return STATUS_ABANDONED;
 
-	WPP_INIT_TRACING(DriverObject, RegistryPath);
+	ComLogger::Initialize();
 	WindowsBuildNumber = osVersion.dwBuildNumber;
 
 	// Loading ExAllocatePool2 if available.
@@ -26,7 +26,6 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 
 	if (!NT_SUCCESS(status)) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to find kernel base address");
-		WPP_CLEANUP(DriverObject);
 		return status;
 	}
 
@@ -36,7 +35,6 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	__except (EXCEPTION_EXECUTE_HANDLER) {
 		status = GetExceptionCode();
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Exception occurred while initializing the pool manager: (0x%08X)", status);
-		WPP_CLEANUP(DriverObject);
 		return status;
 	}
 
@@ -48,7 +46,6 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 
 	if (!NT_SUCCESS(status)) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to create device object (0x%08X)", status);
-		WPP_CLEANUP(DriverObject);
 		return status;
 	}
 	status = IoCreateSymbolicLink(&symLinkName, &deviceName);
@@ -56,7 +53,6 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	if (!NT_SUCCESS(status)) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to create symbolic link (0x%08X)", status);
 		IoDeleteDevice(deviceObject);
-		WPP_CLEANUP(DriverObject);
 		return status;
 	}
 
@@ -77,7 +73,6 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to initialize the hypervisor (0x%08X)", status);
 		IoDeleteSymbolicLink(&symLinkName);
 		IoDeleteDevice(deviceObject);
-		WPP_CLEANUP(DriverObject);
 		return status;
 	}
 
@@ -98,7 +93,6 @@ void NovaUnload(_In_ PDRIVER_OBJECT DriverObject) {
 	IoDeleteDevice(DriverObject->DeviceObject);
 
 	NovaHypervisorLog(TRACE_FLAG_INFO, "Driver unloaded");
-	WPP_CLEANUP(DriverObject);
 }
 
 /*
