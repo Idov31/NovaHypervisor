@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "Ept.h"
+#include "EventInjection.h"
 
 Ept::Ept() {
 	eptPointer = { 0 };
@@ -429,21 +430,26 @@ bool Ept::LogicalProcessorInitialize() {
 * Parameters:
 * @violationQualification [_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION] -- The EPT violation qualification.
 * @guestPhysicalAddr	  [_In_ UINT64]								  -- The guest physical address.
+* @guestLinearAddress	  [_In_ ULONG64]								  -- The guest linear address being accessed.
+* @guestRip				  [_In_ ULONG64]								  -- The guest instruction pointer that caused the access.
 *
 * Returns:
 * @status				  [bool]									  -- True if the page hook exit is handled, otherwise false.
 */
 _Use_decl_annotations_
-bool Ept::HandlePageHookExit(_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification, _In_ UINT64 guestPhysicalAddr) {
+bool Ept::HandlePageHookExit(_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification,
+	_In_ UINT64 guestPhysicalAddr,
+	_In_ ULONG64 guestLinearAddress,
+	_In_ ULONG64 guestRip) {
 	PEPT_HOOKED_PAGE_DETAIL hookedEntry = NULL;
 	bool handled = false;
+	bool restoreHookAfterInstruction = false;
 	UINT64 alignedPhysicalAddress = reinterpret_cast<UINT64>(PAGE_ALIGN(guestPhysicalAddr));
 
 	if (!alignedPhysicalAddress) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Target address could not be mapped to physical memory");
 		return handled;
 	}
-	UINT64 virtualAddress = GetVirtualAddress(guestPhysicalAddr);
 	this->hookedPagesLock.Lock();
 	PLIST_ENTRY currentEntry = this->hookedPages;
 
@@ -453,9 +459,9 @@ bool Ept::HandlePageHookExit(_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violation
 
 		if (hookedEntry->PhysicalBaseAddress == alignedPhysicalAddress) {
 			ULONG currentProcessor = KeGetCurrentProcessorNumber();
-			handled = HandleHookedPage(hookedEntry, violationQualification, virtualAddress);
+			handled = HandleHookedPage(hookedEntry, violationQualification, guestLinearAddress, guestRip, &restoreHookAfterInstruction);
 
-			if (handled && !GuestState[currentProcessor].IncrementRip) {
+			if (restoreHookAfterInstruction) {
 				GuestState[currentProcessor].HookedPage = hookedEntry;
 				VmxHelper::SetMonitorTrapFlag(true);
 			}
@@ -474,54 +480,72 @@ bool Ept::HandlePageHookExit(_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violation
 * Parameters:
 * @hookedEntryDetails	  [_Inout_ EPT_HOOKED_PAGE_DETAIL]			  -- The hooked page details.
 * @violationQualification [_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION] -- The violation qualification.
-* @guestVirtualAddress    [_In_ ULONG64]							  -- The guest virtual address that caused the hook.
+* @guestLinearAddress     [_In_ ULONG64]							  -- The guest virtual address that caused the hook.
+* @guestRip				  [_In_ ULONG64]							  -- The guest instruction pointer that caused the access.
 *
 * Returns:
 * @status				  [bool]									  -- True if the page is handled, otherwise false.
 */
 bool Ept::HandleHookedPage(_Inout_ EPT_HOOKED_PAGE_DETAIL* hookedEntryDetails,
-	_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification, _In_ ULONG64 guestVirtualAddress) {
+	_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification,
+	_In_ ULONG64 guestLinearAddress,
+	_In_ ULONG64 guestRip,
+	_Out_ bool* restoreHookAfterInstruction) {
 	bool operationAllowed = false;
 	bool handled = false;
 	PEPT_PML1_ENTRY pml1Entry = hookedEntryDetails->EntryAddress;
+	bool fromKernelImage = guestRip >= KernelBaseInfo.KernelBaseAddress &&
+		guestRip < (KernelBaseInfo.KernelBaseAddress + KernelBaseInfo.KernelSize);
+	ULONG32 pageFaultErrorCode = 1;
+
+	*restoreHookAfterInstruction = false;
+
+	if (violationQualification.WriteAccess)
+		pageFaultErrorCode |= 1 << 1;
+	if (violationQualification.UserModeLinearAddress)
+		pageFaultErrorCode |= 1 << 2;
+	if (violationQualification.ExecuteAccess)
+		pageFaultErrorCode |= 1 << 4;
 
 	if (!violationQualification.EptExecutable && violationQualification.ExecuteAccess) {
-		if (guestVirtualAddress >= KernelBaseInfo.KernelBaseAddress &&
-			guestVirtualAddress < (KernelBaseInfo.KernelBaseAddress + KernelBaseInfo.KernelSize)) {
+		if (fromKernelImage) {
 			pml1Entry->ExecuteAccess = 1;
 			operationAllowed = true;
-			NovaHypervisorLog(TRACE_FLAG_INFO, "Allowed execute access to protected address from: 0x%llx", guestVirtualAddress);
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Allowed execute access to protected address 0x%llx from RIP 0x%llx", guestLinearAddress, guestRip);
 		}
 		else
-			NovaHypervisorLog(TRACE_FLAG_INFO, "Blocked execute access to protected address from: 0x%llx", guestVirtualAddress);
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Blocked execute access to protected address 0x%llx from RIP 0x%llx", guestLinearAddress, guestRip);
 		handled = true;
 	}
 	else if (!violationQualification.EptWriteable && violationQualification.WriteAccess) {
-		if (guestVirtualAddress >= KernelBaseInfo.KernelBaseAddress &&
-			guestVirtualAddress < (KernelBaseInfo.KernelBaseAddress + KernelBaseInfo.KernelSize)) {
+		if (fromKernelImage) {
 			pml1Entry->WriteAccess = 1;
 			operationAllowed = true;
-			NovaHypervisorLog(TRACE_FLAG_INFO, "Allowed write access to protected address from: 0x%llx", guestVirtualAddress);
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Allowed write access to protected address 0x%llx from RIP 0x%llx", guestLinearAddress, guestRip);
 		}
 		else
-			NovaHypervisorLog(TRACE_FLAG_INFO, "Blocked write access to protected address from: 0x%llx", guestVirtualAddress);
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Blocked write access to protected address 0x%llx from RIP 0x%llx", guestLinearAddress, guestRip);
 		handled = true;
 	}
 	else if (!violationQualification.EptReadable && violationQualification.ReadAccess) {
-		if (guestVirtualAddress >= KernelBaseInfo.KernelBaseAddress &&
-			guestVirtualAddress < (KernelBaseInfo.KernelBaseAddress + KernelBaseInfo.KernelSize)) {
+		if (fromKernelImage) {
 			pml1Entry->ReadAccess = 1;
 			operationAllowed = true;
-			NovaHypervisorLog(TRACE_FLAG_INFO, "Allowed read access to protected address from: 0x%llx", guestVirtualAddress);
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Allowed read access to protected address 0x%llx from RIP 0x%llx", guestLinearAddress, guestRip);
 		}
 		else
-			NovaHypervisorLog(TRACE_FLAG_INFO, "Blocked read access to protected address from: 0x%llx", guestVirtualAddress);
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Blocked read access to protected address 0x%llx from RIP 0x%llx", guestLinearAddress, guestRip);
 		handled = true;
 	}
 
 	if (operationAllowed) {
 		SetPML1AndInvalidateTLB(hookedEntryDetails->EntryAddress, hookedEntryDetails->OriginalEntry, SINGLE_CONTEXT);
 		GuestState[KeGetCurrentProcessorNumber()].IncrementRip = false;
+		*restoreHookAfterInstruction = true;
+	}
+	else if (handled) {
+		GuestState[KeGetCurrentProcessorNumber()].IncrementRip = false;
+		EventHandler::InjectPageFault(guestLinearAddress, pageFaultErrorCode);
 	}
 	return handled;
 }
@@ -540,8 +564,13 @@ bool Ept::HandleHookedPage(_Inout_ EPT_HOOKED_PAGE_DETAIL* hookedEntryDetails,
 void Ept::HandleEptViolation(_In_ ULONG64 exitQualification, _In_ ULONG64 guestPhysicalAddr) {
 	VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification = { 0 };
 	violationQualification.Flags = exitQualification;
+	SIZE_T guestLinearAddress = 0;
+	SIZE_T guestRip = 0;
 
-	if (HandlePageHookExit(violationQualification, guestPhysicalAddr))
+	__vmx_vmread(GUEST_LINEAR_ADDRESS, &guestLinearAddress);
+	__vmx_vmread(GUEST_RIP, &guestRip);
+
+	if (HandlePageHookExit(violationQualification, guestPhysicalAddr, guestLinearAddress, guestRip))
 		return;
 
 	NovaHypervisorLog(TRACE_FLAG_ERROR, "Unexpected EPT violation at 0x%llx", guestPhysicalAddr);
@@ -602,12 +631,13 @@ bool Ept::RootModePageHook(_In_ PVOID targetFunc, _In_ UINT8 permissions) {
 		return false;
 	}
 
-	if (IsHookExists(reinterpret_cast<UINT64>(targetFunc))) {
+	PVOID virtualFuncAddress = PAGE_ALIGN(targetFunc);
+
+	if (IsHookExists(reinterpret_cast<UINT64>(virtualFuncAddress))) {
 		NovaHypervisorLog(TRACE_FLAG_INFO, "Hook already exists for the target function: 0x%llx", reinterpret_cast<UINT64>(targetFunc));
 		return true;
 	}
 
-	PVOID virtualFuncAddress = PAGE_ALIGN(targetFunc);
 	SIZE_T physicalFuncAddress = GetPhysicalAddress(reinterpret_cast<UINT64>(virtualFuncAddress));
 
 	if (!physicalFuncAddress) {
@@ -646,7 +676,7 @@ bool Ept::RootModePageHook(_In_ PVOID targetFunc, _In_ UINT8 permissions) {
 		return false;
 	}
 	hookedEntry->IsExecutionHook = false;
-	hookedEntry->VirtualAddress = reinterpret_cast<UINT64>(targetFunc);
+	hookedEntry->VirtualAddress = reinterpret_cast<UINT64>(virtualFuncAddress);
 	hookedEntry->PhysicalAddress = physicalFuncAddress;
 	hookedEntry->PhysicalBaseAddress = reinterpret_cast<UINT64>(PAGE_ALIGN(physicalFuncAddress));
 	hookedEntry->EntryAddress = pml1Entry;
@@ -844,11 +874,11 @@ void Ept::SetPML1AndInvalidateTLB(_Inout_ PEPT_PML1_ENTRY pml1Entry, _In_ EPT_PM
 bool Ept::PageUnhook(_In_ UINT64 guestVirtualAddress) {
 	if (GuestState[KeGetCurrentProcessorNumber()].IsOnVmxRoot)
 		return false;
-	PEPT_HOOKED_PAGE_DETAIL hookedEntry = GetHookedPage(guestVirtualAddress);
+	UINT64 alignedGuestVirtualAddress = reinterpret_cast<UINT64>(PAGE_ALIGN(guestVirtualAddress));
+	PEPT_HOOKED_PAGE_DETAIL hookedEntry = GetHookedPage(alignedGuestVirtualAddress);
 
 	if (hookedEntry) {
 		KeGenericCallDpc(UnhookSinglePage, reinterpret_cast<PVOID>(hookedEntry->VirtualAddress));
-		RemoveEntryList(hookedEntry->Entry.Flink);
 		return true;
 	}
 	return false;
@@ -867,12 +897,26 @@ bool Ept::PageUnhook(_In_ UINT64 guestVirtualAddress) {
 bool Ept::PageUnhookVmcall(_In_ UINT64 guestVirtualAddress) {
 	if (!GuestState[KeGetCurrentProcessorNumber()].IsOnVmxRoot)
 		return false;
-	PEPT_HOOKED_PAGE_DETAIL hookedEntry = GetHookedPage(guestVirtualAddress);
+	UINT64 alignedGuestVirtualAddress = reinterpret_cast<UINT64>(PAGE_ALIGN(guestVirtualAddress));
+	PEPT_HOOKED_PAGE_DETAIL hookedEntry = nullptr;
 
-	if (hookedEntry) {
-		SetPML1AndInvalidateTLB(hookedEntry->EntryAddress, hookedEntry->OriginalEntry, SINGLE_CONTEXT);
-		return true;
+	this->hookedPagesLock.Lock();
+	PLIST_ENTRY entry = this->hookedPages;
+
+	while (this->hookedPages != entry->Flink) {
+		entry = entry->Flink;
+		hookedEntry = CONTAINING_RECORD(entry, EPT_HOOKED_PAGE_DETAIL, Entry);
+
+		if (hookedEntry->VirtualAddress == alignedGuestVirtualAddress) {
+			SetPML1AndInvalidateTLB(hookedEntry->EntryAddress, hookedEntry->OriginalEntry, SINGLE_CONTEXT);
+			RemoveEntryList(&hookedEntry->Entry);
+			InitializeListHead(&hookedEntry->Entry);
+			this->hookedPagesLock.Unlock();
+			poolManager->Free(hookedEntry, EPT_HOOK_PAGE);
+			return true;
+		}
 	}
+	this->hookedPagesLock.Unlock();
 	return false;
 }
 
@@ -891,13 +935,19 @@ bool Ept::UnhookAllPagesVmcall() {
 
 	if (!GuestState[KeGetCurrentProcessorNumber()].IsOnVmxRoot)
 		return false;
-	PLIST_ENTRY entry = this->hookedPages;
+	this->hookedPagesLock.Lock();
+	PLIST_ENTRY entry = this->hookedPages->Flink;
 
-	while (this->hookedPages != entry->Flink) {
-		entry = entry->Flink;
+	while (entry != this->hookedPages) {
+		PLIST_ENTRY nextEntry = entry->Flink;
 		hookedEntry = CONTAINING_RECORD(entry, EPT_HOOKED_PAGE_DETAIL, Entry);
 		SetPML1AndInvalidateTLB(hookedEntry->EntryAddress, hookedEntry->OriginalEntry, SINGLE_CONTEXT);
+		RemoveEntryList(&hookedEntry->Entry);
+		InitializeListHead(&hookedEntry->Entry);
+		poolManager->Free(hookedEntry, EPT_HOOK_PAGE);
+		entry = nextEntry;
 	}
+	this->hookedPagesLock.Unlock();
 	return true;
 }
 
@@ -914,13 +964,11 @@ bool Ept::UnhookAllPagesVmcall() {
 void Ept::UnhookAllPages() {
 	if (GuestState[KeGetCurrentProcessorNumber()].IsOnVmxRoot)
 		return;
-	KeGenericCallDpc(UnhookAllPagesDpc, NULL);
 
-	// Clean up the protected addresses
-	hookedPagesLock.Lock();
-	this->hookedPages->Blink = NULL;
-	this->hookedPages->Flink = NULL;
-	hookedPagesLock.Unlock();
+	if (GuestState[KeGetCurrentProcessorNumber()].IsLaunched)
+		KeGenericCallDpc(UnhookAllPagesDpc, NULL);
+	else
+		ReleaseAllHookedPageRecords();
 }
 
 /*
@@ -935,7 +983,7 @@ void Ept::UnhookAllPages() {
 * @status [bool] -- True if a hook exists, otherwise false.
 */
 bool Ept::IsHookExists(_In_ UINT64 guestVirtualAddress) {
-	return GetHookedPage(guestVirtualAddress) != NULL;
+	return GetHookedPage(reinterpret_cast<UINT64>(PAGE_ALIGN(guestVirtualAddress))) != NULL;
 }
 
 /*
@@ -950,6 +998,7 @@ bool Ept::IsHookExists(_In_ UINT64 guestVirtualAddress) {
 */
 PEPT_HOOKED_PAGE_DETAIL Ept::GetHookedPage(_In_ UINT64 guestVirtualAddress) {
 	PEPT_HOOKED_PAGE_DETAIL hookedEntry = nullptr;
+	UINT64 alignedGuestVirtualAddress = reinterpret_cast<UINT64>(PAGE_ALIGN(guestVirtualAddress));
 
 	this->hookedPagesLock.Lock();
 	PLIST_ENTRY entry = this->hookedPages;
@@ -963,11 +1012,27 @@ PEPT_HOOKED_PAGE_DETAIL Ept::GetHookedPage(_In_ UINT64 guestVirtualAddress) {
 		entry = entry->Flink;
 		hookedEntry = CONTAINING_RECORD(entry, EPT_HOOKED_PAGE_DETAIL, Entry);
 
-		if (hookedEntry->VirtualAddress == guestVirtualAddress) {
+		if (hookedEntry->VirtualAddress == alignedGuestVirtualAddress) {
 			this->hookedPagesLock.Unlock();
 			return hookedEntry;
 		}
 	}
 	this->hookedPagesLock.Unlock();
 	return NULL;
+}
+
+void Ept::ReleaseAllHookedPageRecords() {
+	PEPT_HOOKED_PAGE_DETAIL hookedEntry = nullptr;
+	this->hookedPagesLock.Lock();
+	PLIST_ENTRY entry = this->hookedPages->Flink;
+
+	while (entry != this->hookedPages) {
+		PLIST_ENTRY nextEntry = entry->Flink;
+		hookedEntry = CONTAINING_RECORD(entry, EPT_HOOKED_PAGE_DETAIL, Entry);
+		RemoveEntryList(entry);
+		InitializeListHead(&hookedEntry->Entry);
+		poolManager->Free(hookedEntry, EPT_HOOK_PAGE);
+		entry = nextEntry;
+	}
+	this->hookedPagesLock.Unlock();
 }

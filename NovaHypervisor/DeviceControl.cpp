@@ -25,10 +25,13 @@ NTSTATUS NovaDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
 				break;
 			}
 			HookedPage* hookedPage = static_cast<HookedPage*>(Irp->AssociatedIrp.SystemBuffer);
+			PVOID alignedAddress = PAGE_ALIGN(reinterpret_cast<PVOID>(hookedPage->Address));
 
 			if (!VALID_KERNELMODE_MEMORY(hookedPage->Address) ||
+				hookedPage->Permissions == 0 ||
 				hookedPage->Permissions > EPT_MAX_PAGE_PERMISSIONS ||
-				hookedPage->Permissions & EPT_PAGE_WRITE && !(hookedPage->Permissions & EPT_PAGE_READ)) {
+				hookedPage->Permissions & EPT_PAGE_WRITE && !(hookedPage->Permissions & EPT_PAGE_READ) ||
+				!MmIsNonPagedSystemAddressValid(alignedAddress)) {
 				status = STATUS_INVALID_PARAMETER;
 				break;
 			}
