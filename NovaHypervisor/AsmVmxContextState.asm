@@ -199,7 +199,11 @@ AsmVmxSaveState PROC
 	sub rsp, 0100h
 	mov rcx, rsp
 
+    ; Reserve Windows x64 shadow space and align the stack for the C++ helper
+    ; without moving the guest stack pointer passed in RCX.
+	sub rsp, 028h
 	call VirtualizeProcessor
+	add rsp, 028h
 
 	; Shouldn't be reached, added for fail safe.
 	int 3
