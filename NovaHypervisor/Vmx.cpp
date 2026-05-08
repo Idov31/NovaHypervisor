@@ -268,6 +268,8 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 
 	__vmx_vmwrite(PAGE_FAULT_ERROR_CODE_MASK, 0);
 	__vmx_vmwrite(PAGE_FAULT_ERROR_CODE_MATCH, 0);
+	__vmx_vmwrite(EXCEPTION_BITMAP, 0);
+	__vmx_vmwrite(CR3_TARGET_COUNT, 0);
 
 	__vmx_vmwrite(VM_EXIT_MSR_STORE_COUNT, 0);
 	__vmx_vmwrite(VM_EXIT_MSR_LOAD_COUNT, 0);
@@ -337,6 +339,10 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	__vmx_vmwrite(GUEST_IDTR_LIMIT, AsmGetIdtLimit());
 
 	__vmx_vmwrite(GUEST_RFLAGS, AsmGetRflags());
+	__vmx_vmwrite(GUEST_INTERRUPTIBILITY_INFO, 0);
+	__vmx_vmwrite(GUEST_ACTIVITY_STATE, 0);
+	__vmx_vmwrite(GUEST_PENDING_DBG_EXCEPTIONS, 0);
+	__vmx_vmwrite(GUEST_SM_BASE, 0);
 
 	__vmx_vmwrite(GUEST_SYSENTER_CS, __readmsr(MSR_IA32_SYSENTER_CS));
 	__vmx_vmwrite(GUEST_SYSENTER_EIP, __readmsr(MSR_IA32_SYSENTER_EIP));

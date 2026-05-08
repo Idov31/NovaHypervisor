@@ -19,12 +19,13 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState)
 
 	// Indicates we are in Vmx root mode in this logical core
 	GuestState[currentProcessorIndex].IsOnVmxRoot = true;
-	GuestState[currentProcessorIndex].IncrementRip = true;
+	GuestState[currentProcessorIndex].IncrementRip = false;
 	Ept* currentEptInstance = GuestState[currentProcessorIndex].EptInstance;
 
 	__vmx_vmread(VM_EXIT_REASON, &exitReason);
 	__vmx_vmread(EXIT_QUALIFICATION, &exitQualification);
 	exitReason &= 0xffff;
+	EventHandler::ClearPendingInjection();
 
 	switch (exitReason) {
 		case EXIT_REASON_EXCEPTION_NMI: {
@@ -52,6 +53,7 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState)
 
 		case EXIT_REASON_HLT: {
 			// __halt(); // We don't want to halt.
+			GuestState[currentProcessorIndex].IncrementRip = true;
 			break;
 		}
 
@@ -67,23 +69,28 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState)
 			SIZE_T rflags = 0;
 			__vmx_vmread(GUEST_RFLAGS, &rflags);
 			__vmx_vmwrite(GUEST_RFLAGS, rflags | 0x1);
+			GuestState[currentProcessorIndex].IncrementRip = true;
 			break;
 		}
 
 		case EXIT_REASON_CR_ACCESS: {
 			RegistersHandler::HandleCRAccess(guestRegisters);
+			GuestState[currentProcessorIndex].IncrementRip = true;
 			break;
 		}
 		case EXIT_REASON_MSR_READ:{
 			RegistersHandler::HandleMSRRead(guestRegisters);
+			GuestState[currentProcessorIndex].IncrementRip = true;
 			break;
 		}
 		case EXIT_REASON_MSR_WRITE: {
 			RegistersHandler::HandleMSRWrite(guestRegisters);
+			GuestState[currentProcessorIndex].IncrementRip = true;
 			break;
 		}
 		case EXIT_REASON_CPUID: {
 			RegistersHandler::HandleCpuid(guestRegisters);
+			GuestState[currentProcessorIndex].IncrementRip = true;
 			break;
 		}
 		case EXIT_REASON_MONITOR_TRAP_FLAG: {
@@ -113,19 +120,23 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState)
 				guestRegisters->rax = VmcallHandler(guestRegisters->rcx, guestRegisters->rdx, guestRegisters->r8, guestRegisters->r9);
 			else if (!HypercallHandler(currentEptInstance, guestRegisters, guestFxState))
 				guestRegisters->rax = static_cast<UINT64>(STATUS_INVALID_PARAMETER);
+			GuestState[currentProcessorIndex].IncrementRip = true;
 			break;
 		}
 		case EXIT_REASON_XSETBV: {
 			_xsetbv(static_cast<ULONG>(guestRegisters->rcx),
 				(guestRegisters->rdx << 32) | (guestRegisters->rax & 0xFFFFFFFF));
+			GuestState[currentProcessorIndex].IncrementRip = true;
 			break;
 		}
 		case EXIT_REASON_INVD: {
 			__wbinvd();
+			GuestState[currentProcessorIndex].IncrementRip = true;
 			break;
 		}
 		case EXIT_REASON_UMONITOR:
 		case EXIT_REASON_UMWAIT: {
+			GuestState[currentProcessorIndex].IncrementRip = true;
 			break;
 		}
 		default: {
@@ -136,6 +147,9 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState)
 
 	if (!GuestState[currentProcessorIndex].VmxoffState.IsVmxoffExecuted && GuestState[currentProcessorIndex].IncrementRip)
 		VmxHelper::ResumeToNextInstruction();
+
+	if (!GuestState[currentProcessorIndex].VmxoffState.IsVmxoffExecuted)
+		EventHandler::ReinjectEventFromIdtVectoring();
 
 	// Set indicator of Vmx noon root mode to false
 	GuestState[currentProcessorIndex].IsOnVmxRoot = false;
