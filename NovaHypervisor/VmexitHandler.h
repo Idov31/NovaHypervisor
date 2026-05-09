@@ -7,6 +7,13 @@
 #include "VmcallHandler.h"
 #include "ComLogger.h"
 
+enum class VmExitAction : UINT8 {
+	ResumeCurrentRip,
+	AdvanceRip,
+	InjectEvent,
+	ShutdownVmx
+};
+
 constexpr ULONG64 NO_HYPERV_MAGIC = 0x4e4f485950455256;
 constexpr ULONG64 VMCALL_MAGIC = 0x564d43414c4c;
 constexpr ULONG64 HYPERVISOR_MAGIC = 0x4856544d50;

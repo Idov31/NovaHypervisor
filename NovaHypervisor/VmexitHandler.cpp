@@ -1,88 +1,100 @@
 #include "pch.h"
 #include "VmexitHandler.h"
 
-namespace {
-	enum class VmExitAction : UINT8 {
-		ResumeCurrentRip,
-		AdvanceRip,
-		InjectEvent,
-		ShutdownVmx
-	};
+/*
+* Description:
+* LogUnhandledVmExit is responsible for recording enough guest state to debug an unexpected VM-exit.
+*
+* Parameters:
+* @exitReason		  [_In_ SIZE_T] -- The VM-exit reason.
+* @exitQualification [_In_ SIZE_T] -- The VM-exit qualification field.
+*
+* Returns:
+* There is no return value.
+*/
+static void LogUnhandledVmExit(_In_ SIZE_T exitReason, _In_ SIZE_T exitQualification) {
+	SIZE_T guestRip = 0;
+	SIZE_T guestRsp = 0;
+	SIZE_T guestCr3 = 0;
+	SIZE_T guestRflags = 0;
+	__vmx_vmread(GUEST_RIP, &guestRip);
+	__vmx_vmread(GUEST_RSP, &guestRsp);
+	__vmx_vmread(GUEST_CR3, &guestCr3);
+	__vmx_vmread(GUEST_RFLAGS, &guestRflags);
 
-	void LogUnhandledVmExit(_In_ SIZE_T exitReason, _In_ SIZE_T exitQualification) {
-		SIZE_T guestRip = 0;
-		SIZE_T guestRsp = 0;
-		SIZE_T guestCr3 = 0;
-		SIZE_T guestRflags = 0;
-		__vmx_vmread(GUEST_RIP, &guestRip);
-		__vmx_vmread(GUEST_RSP, &guestRsp);
-		__vmx_vmread(GUEST_CR3, &guestCr3);
-		__vmx_vmread(GUEST_RFLAGS, &guestRflags);
+	NovaHypervisorLog(TRACE_FLAG_ERROR,
+		"Unhandled VM-exit reason=0x%llx qualification=0x%llx RIP=0x%llx RSP=0x%llx CR3=0x%llx RFLAGS=0x%llx",
+		exitReason,
+		exitQualification,
+		guestRip,
+		guestRsp,
+		guestCr3,
+		guestRflags);
+}
 
+/*
+* Description:
+* EmulateXsetbv is responsible for validating and applying guest XCR0 updates.
+*
+* Parameters:
+* @guestRegisters [_In_ PGUEST_REGS] -- The guest register frame containing XSETBV operands.
+*
+* Returns:
+* @emulated	   [bool]			   -- True if the XSETBV operation was accepted.
+*/
+static bool EmulateXsetbv(_In_ PGUEST_REGS guestRegisters) {
+	if (guestRegisters->rcx != 0)
+		return false;
+
+	int cpuInfo[4] = { 0 };
+	__cpuidex(cpuInfo, static_cast<int>(CPUID_EXTENDED_STATE_ENUMERATION), 0);
+
+	const ULONG64 supportedMask =
+		(static_cast<ULONG64>(static_cast<ULONG>(cpuInfo[3])) << 32) |
+		static_cast<ULONG>(cpuInfo[0]);
+	const ULONG64 requestedMask =
+		(guestRegisters->rdx << 32) |
+		(guestRegisters->rax & 0xFFFFFFFF);
+
+	if ((requestedMask & ~supportedMask) ||
+		!(requestedMask & 0x1) ||
+		((requestedMask & 0x4) && ((requestedMask & 0x6) != 0x6))) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Invalid guest XSETBV value: 0x%llx supported=0x%llx", requestedMask, supportedMask);
+		return false;
+	}
+
+	ULONG requestedSize = 0x240;
+
+	for (ULONG stateComponent = 2; stateComponent < 64; stateComponent++) {
+		if (!(requestedMask & (1ULL << stateComponent)))
+			continue;
+
+		int stateInfo[4] = { 0 };
+		__cpuidex(stateInfo, static_cast<int>(CPUID_EXTENDED_STATE_ENUMERATION), static_cast<int>(stateComponent));
+
+		const ULONG componentSize = static_cast<ULONG>(stateInfo[0]);
+		const ULONG componentOffset = static_cast<ULONG>(stateInfo[1]);
+
+		if (componentSize == 0 || componentOffset == 0)
+			continue;
+
+		const ULONG componentEnd = componentOffset + componentSize;
+
+		if (componentEnd > requestedSize)
+			requestedSize = componentEnd;
+	}
+
+	if (requestedSize > MAX_XSAVE_AREA_SIZE) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR,
-			"Unhandled VM-exit reason=0x%llx qualification=0x%llx RIP=0x%llx RSP=0x%llx CR3=0x%llx RFLAGS=0x%llx",
-			exitReason,
-			exitQualification,
-			guestRip,
-			guestRsp,
-			guestCr3,
-			guestRflags);
+			"Guest XSETBV requires unsupported XSAVE area size: XCR0=0x%llx required=0x%x max=0x%llx",
+			requestedMask,
+			requestedSize,
+			MAX_XSAVE_AREA_SIZE);
+		return false;
 	}
 
-	bool EmulateXsetbv(_In_ PGUEST_REGS guestRegisters) {
-		if (guestRegisters->rcx != 0)
-			return false;
-
-		int cpuInfo[4] = { 0 };
-		__cpuidex(cpuInfo, static_cast<int>(CPUID_EXTENDED_STATE_ENUMERATION), 0);
-
-		const ULONG64 supportedMask =
-			(static_cast<ULONG64>(static_cast<ULONG>(cpuInfo[3])) << 32) |
-			static_cast<ULONG>(cpuInfo[0]);
-		const ULONG64 requestedMask =
-			(guestRegisters->rdx << 32) |
-			(guestRegisters->rax & 0xFFFFFFFF);
-
-		if ((requestedMask & ~supportedMask) ||
-			!(requestedMask & 0x1) ||
-			((requestedMask & 0x4) && ((requestedMask & 0x6) != 0x6))) {
-			NovaHypervisorLog(TRACE_FLAG_ERROR, "Invalid guest XSETBV value: 0x%llx supported=0x%llx", requestedMask, supportedMask);
-			return false;
-		}
-
-		ULONG requestedSize = 0x240;
-
-		for (ULONG stateComponent = 2; stateComponent < 64; stateComponent++) {
-			if (!(requestedMask & (1ULL << stateComponent)))
-				continue;
-
-			int stateInfo[4] = { 0 };
-			__cpuidex(stateInfo, static_cast<int>(CPUID_EXTENDED_STATE_ENUMERATION), static_cast<int>(stateComponent));
-
-			const ULONG componentSize = static_cast<ULONG>(stateInfo[0]);
-			const ULONG componentOffset = static_cast<ULONG>(stateInfo[1]);
-
-			if (componentSize == 0 || componentOffset == 0)
-				continue;
-
-			const ULONG componentEnd = componentOffset + componentSize;
-
-			if (componentEnd > requestedSize)
-				requestedSize = componentEnd;
-		}
-
-		if (requestedSize > MAX_XSAVE_AREA_SIZE) {
-			NovaHypervisorLog(TRACE_FLAG_ERROR,
-				"Guest XSETBV requires unsupported XSAVE area size: XCR0=0x%llx required=0x%x max=0x%llx",
-				requestedMask,
-				requestedSize,
-				MAX_XSAVE_AREA_SIZE);
-			return false;
-		}
-
-		_xsetbv(static_cast<ULONG>(guestRegisters->rcx), requestedMask);
-		return true;
-	}
+	_xsetbv(static_cast<ULONG>(guestRegisters->rcx), requestedMask);
+	return true;
 }
 
 /*
