@@ -52,7 +52,6 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState)
 		}
 
 		case EXIT_REASON_HLT: {
-			NovaHypervisorLog(TRACE_FLAG_ERROR, "Got HLT, reason : 0x%llx", exitReason);
 			// __halt(); // We don't want to halt.
 			break;
 		}

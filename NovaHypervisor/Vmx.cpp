@@ -339,7 +339,7 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 
 	__vmx_vmwrite(HOST_CR0, __readcr0());
 	__vmx_vmwrite(HOST_CR4, __readcr4());
-	__vmx_vmwrite(HOST_CR3, VmxHelper::FindSystemDirectoryTableBase());
+	__vmx_vmwrite(HOST_CR3, HostDirectoryTableBase);
 
 	__vmx_vmwrite(GUEST_GDTR_BASE, AsmGetGdtBase());
 	__vmx_vmwrite(GUEST_IDTR_BASE, AsmGetIdtBase());

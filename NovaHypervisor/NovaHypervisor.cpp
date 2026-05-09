@@ -8,6 +8,7 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	PDEVICE_OBJECT deviceObject = nullptr;
 	NTSTATUS status = STATUS_SUCCESS;
 	KernelBaseInfo = { 0 };
+	HostDirectoryTableBase = 0;
 
 	// Getting the OS version.
 	RTL_OSVERSIONINFOW osVersion = { sizeof(osVersion) };
@@ -22,6 +23,18 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	// Loading ExAllocatePool2 if available.
 	UNICODE_STRING routineName = RTL_CONSTANT_STRING(L"ExAllocatePool2");
 	AllocatePool2 = MmGetSystemRoutineAddress(&routineName);
+
+	KAPC_STATE apcState = { 0 };
+	KeStackAttachProcess(PsInitialSystemProcess, &apcState);
+	HostDirectoryTableBase = __readcr3() & ~0xfffULL;
+	KeUnstackDetachProcess(&apcState);
+
+	if (!HostDirectoryTableBase) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to capture stable host CR3");
+		return STATUS_UNSUCCESSFUL;
+	}
+	NovaHypervisorLog(TRACE_FLAG_INFO, "Host CR3: 0x%llx", HostDirectoryTableBase);
+
 	status = VmxHelper::FindKernelBaseAddress();
 
 	if (!NT_SUCCESS(status)) {

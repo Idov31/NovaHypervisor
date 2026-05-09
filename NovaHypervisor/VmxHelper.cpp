@@ -337,21 +337,6 @@ void VmxHelper::RestoreRegisters() {
 	AsmReloadIdtr(reinterpret_cast<PVOID>(idtrBase), idtrLimit);
 }
 
-/*
-* Description:
-* FindSystemDirectoryTableBase is responsible for getting the system process' directory table base.
-*
-* Parameters:
-* There are no parameters.
-*
-* Returns:
-* @directoryTableBase [UINT64] -- The system process' directory table base.
-*/
- UINT64 VmxHelper::FindSystemDirectoryTableBase() {
-	KPROCESS* SystemProcess = static_cast<PKPROCESS>(PsInitialSystemProcess);
-	return SystemProcess->DirectoryTableBase;
-}
-
  /*
  * Description:
  * FindKernelBaseAddress is responsible for finding the kernel base address.

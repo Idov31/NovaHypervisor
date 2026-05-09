@@ -25,7 +25,6 @@ namespace VmxHelper {
 	NTSTATUS HookPageByVmcall(_In_opt_ UINT64 context = 0);
 	NTSTATUS UnhookPageByVmcall(_In_opt_ UINT64 context = 0);
 	void RestoreRegisters();
-	UINT64 FindSystemDirectoryTableBase();
 	NTSTATUS FindKernelBaseAddress();
 	void SetMonitorTrapFlag(_In_ bool set);
 };
