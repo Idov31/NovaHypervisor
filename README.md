@@ -88,13 +88,13 @@ To run the hypervisor, you will need to have a Windows 10 or later version insta
 
 ### Logging
 
-NovaHypervisor logs to the first serial port (COM1, I/O port `0x3F8`) using a small COM logger that can run at `HIGH_LEVEL` IRQL and in VMX root paths. It emits debug, info, and error records with a fixed `NovaHypervisor` prefix.
+NovaHypervisor logs to the second serial port (COM2, I/O port `0x2F8`) using a small COM logger that can run at `HIGH_LEVEL` IRQL and in VMX root paths. It emits debug, info, and error records with a fixed `NovaHypervisor` prefix.
 
 ```cmd
-bcdedit /dbgsettings serial debugport:1 baudrate:115200
+bcdedit /dbgsettings serial debugport:2 baudrate:115200
 ```
 
-Capture the output from the host-side serial pipe or your VM's configured COM1 endpoint at `115200 8N1`. For example, in WinDbg you can attach to the serial transport configured for the VM and observe the log lines as the driver runs.
+Capture the output from the host-side serial pipe or your VM's configured COM2 endpoint at `115200 8N1`. For example, in PuTTY you can attach to the serial transport configured for the VM and observe the log lines as the driver runs. You can also use the [connect-vm.ps1](./scripts/connect-vm.ps1) script to connect to the VM's COM2 port and display the logs in the console.
 
 ### Debugging
 
