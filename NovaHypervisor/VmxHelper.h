@@ -21,6 +21,7 @@ namespace VmxHelper {
 	bool FillGuestSelectorData(_In_ PVOID gdtBase, _In_ ULONG segmentRegister, _In_ USHORT selector);
 	ULONG AdjustControls(_In_ ULONG ctl, _In_ ULONG msr);
 	void InitializeVpidSupport();
+	UINT16 GetVpidTagForProcessor(_In_ ULONG processorIndex);
 	void InvalidateVpid(_In_opt_ UINT64 vpid = 0, _In_opt_ UINT64 address = 0);
 	void InvalidateEpt(_In_opt_ UINT64 context = 0);
 	NTSTATUS InvalidateEptByVmcall(_In_opt_ UINT64 context = 0);

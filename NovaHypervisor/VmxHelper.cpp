@@ -249,7 +249,7 @@ void VmxHelper::InitializeVpidSupport() {
 		eptVpidCapabilities.InvvpidAllContexts;
 
 	if (VpidSupported) {
-		VpidSupported = false; // Intentionally disabled while stabilizing the nested Hyper-V path.
+		VpidSupported = false; // Disabled until Nova has a VMX-root-safe SMP VPID shootdown path.
 		NovaHypervisorLog(TRACE_FLAG_INFO,
 			"VPID is supported by the exposed VMX capabilities but is intentionally disabled. "
 			"Secondary allowed-1: 0x%x, EPT/VPID capabilities: 0x%llx",
@@ -262,6 +262,10 @@ void VmxHelper::InitializeVpidSupport() {
 		"Secondary allowed-1: 0x%x, EPT/VPID capabilities: 0x%llx",
 		secondaryControls.High,
 		eptVpidCapabilities.Flags);
+}
+
+UINT16 VmxHelper::GetVpidTagForProcessor(_In_ ULONG processorIndex) {
+	return static_cast<UINT16>(VPID_TAG_BASE + processorIndex);
 }
 
 /*

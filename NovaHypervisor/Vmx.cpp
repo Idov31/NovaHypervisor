@@ -404,7 +404,7 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	__vmx_vmwrite(EPT_POINTER, state->EptInstance->GetEptPointerFlags());
 
 	if (VpidSupported)
-		__vmx_vmwrite(VIRTUAL_PROCESSOR_ID, VPID_TAG);
+		__vmx_vmwrite(VIRTUAL_PROCESSOR_ID, VmxHelper::GetVpidTagForProcessor(KeGetCurrentProcessorNumber()));
 
 	__vmx_vmwrite(GUEST_RSP, reinterpret_cast<SIZE_T>(guestStack));
 	__vmx_vmwrite(GUEST_RIP, reinterpret_cast<SIZE_T>(AsmVmxRestoreState));
