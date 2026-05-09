@@ -18,7 +18,7 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	if (!NT_SUCCESS(result))
 		return STATUS_ABANDONED;
 
-	ComLogger::Initialize();
+	NovaLogger.Initialize();
 	WindowsBuildNumber = osVersion.dwBuildNumber;
 
 	// Loading ExAllocatePool2 if available.
