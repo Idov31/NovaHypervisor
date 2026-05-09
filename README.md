@@ -122,4 +122,6 @@ Where `<HOSTIP>` is the IP address of your host machine.
 
 - [Sinaei](https://x.com/Intel80x86): For his help with answering questions I had and for his amazing work on HyperDbg and Hypervisor From Scratch.
 
+- [Humza](https://github.com/humzak711): For his help with fixing bugs and suggesting improvements.
+
 - [memN0ps](https://github.com/memN0ps/): For his help with answering questions I had and pointing me to the right resources.
