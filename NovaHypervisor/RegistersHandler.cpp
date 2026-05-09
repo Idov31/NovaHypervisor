@@ -26,68 +26,77 @@ bool RegistersHandler::IsValidMsr(_In_ ULONG64 rcx) {
 * Returns:
 * There is no return value
 */
-void RegistersHandler::HandleCRAccess(_In_ PGUEST_REGS guestRegisters) {
+bool RegistersHandler::HandleCRAccess(_In_ PGUEST_REGS guestRegisters) {
 	SIZE_T exitQualification = 0;
 	__vmx_vmread(EXIT_QUALIFICATION, &exitQualification);
 
 	PMOV_CR_QUALIFICATION data = (PMOV_CR_QUALIFICATION)&exitQualification;
-	PULONG64 registerPointer = &guestRegisters->rax + data->Fields.Register;
+	PULONG64 registerPointer = nullptr;
+	ULONG64 registerValue = 0;
 
-	// Point it to guest RSP
 	if (data->Fields.Register == 4) {
 		SIZE_T rsp = 0;
 		__vmx_vmread(GUEST_RSP, &rsp);
-		*registerPointer = rsp;
+		registerValue = rsp;
+	}
+	else {
+		registerPointer = &guestRegisters->rax + data->Fields.Register;
+		registerValue = *registerPointer;
 	}
 
 	if (data->Fields.AccessType > TYPE_MOV_FROM_CR) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Unsupported CR access type: %d", data->Fields.AccessType);
-		return;
+		return false;
 	}
 
 	if (data->Fields.AccessType == TYPE_MOV_TO_CR) {
 		switch (data->Fields.ControlRegister) {
 		case 0: {
-			__vmx_vmwrite(GUEST_CR0, *registerPointer);
-			__vmx_vmwrite(CR0_READ_SHADOW, *registerPointer);
+			__vmx_vmwrite(GUEST_CR0, registerValue);
+			__vmx_vmwrite(CR0_READ_SHADOW, registerValue);
 			break;
 		}
 		case 3: {
-			__vmx_vmwrite(GUEST_CR3, (*registerPointer & ~(1ULL << 63)));
-			VmxHelper::InvalidateVpid(1);
+			__vmx_vmwrite(GUEST_CR3, (registerValue & ~(1ULL << 63)));
+			VmxHelper::InvalidateVpid(VPID_TAG);
 			break;
 		}
 		case 4: {
-			__vmx_vmwrite(GUEST_CR4, *registerPointer);
-			__vmx_vmwrite(CR4_READ_SHADOW, *registerPointer);
+			__vmx_vmwrite(GUEST_CR4, registerValue);
+			__vmx_vmwrite(CR4_READ_SHADOW, registerValue);
 			break;
 		}
 		default: {
 			NovaHypervisorLog(TRACE_FLAG_ERROR, "Unsupported write operation for control register: %d", data->Fields.ControlRegister);
-			break;
+			return false;
 		}
 		}
 	}
 	else {
 		switch (data->Fields.ControlRegister) {
 		case 0: {
-			__vmx_vmread(GUEST_CR0, registerPointer);
+			__vmx_vmread(GUEST_CR0, &registerValue);
 			break;
 		}
 		case 3: {
-			__vmx_vmread(GUEST_CR3, registerPointer);
+			__vmx_vmread(GUEST_CR3, &registerValue);
 			break;
 		}
 		case 4: {
-			__vmx_vmread(GUEST_CR4, registerPointer);
+			__vmx_vmread(GUEST_CR4, &registerValue);
 			break;
 		}
 		default: {
 			NovaHypervisorLog(TRACE_FLAG_ERROR, "Unsupported read operation for control register: %d", data->Fields.ControlRegister);
-			break;
+			return false;
 		}
 		}
+		if (data->Fields.Register == 4)
+			__vmx_vmwrite(GUEST_RSP, registerValue);
+		else
+			*registerPointer = registerValue;
 	}
+	return true;
 }
 
 /*
@@ -100,22 +109,27 @@ void RegistersHandler::HandleCRAccess(_In_ PGUEST_REGS guestRegisters) {
 * Returns:
 * There is no return value
 */
-void RegistersHandler::HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters) {
+bool RegistersHandler::HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters) {
 	MSR msr = { 0 };
 
 	// Hyper-V synthetic MSRs - pass through transparently to the real hypervisor (TLFS 2.4)
 	if (IsHyperVSyntheticMsr(guestRegisters->rcx)) {
-		msr.Content = __readmsr(guestRegisters->rcx);
+		msr.Content = __readmsr(static_cast<ULONG>(guestRegisters->rcx));
 		guestRegisters->rax = static_cast<ULONG64>(msr.Low);
 		guestRegisters->rdx = static_cast<ULONG64>(msr.High);
-		return;
+		return true;
 	}
 
-	if (IsValidMsr(guestRegisters->rcx))
-		msr.Content = __readmsr((ULONG)guestRegisters->rcx);
+	if (!IsValidMsr(guestRegisters->rcx)) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Guest attempted to read unsupported MSR: 0x%llx", guestRegisters->rcx);
+		return false;
+	}
+
+	msr.Content = __readmsr((ULONG)guestRegisters->rcx);
 
 	guestRegisters->rax = (ULONG64)msr.Low;
 	guestRegisters->rdx = (ULONG64)msr.High;
+	return true;
 }
 
 /*
@@ -128,22 +142,26 @@ void RegistersHandler::HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters) {
 * Returns:
 * There is no return value
 */
-void RegistersHandler::HandleMSRWrite(_In_ PGUEST_REGS guestRegisters) {
+bool RegistersHandler::HandleMSRWrite(_In_ PGUEST_REGS guestRegisters) {
 	// Hyper-V synthetic MSRs - pass through transparently to the real hypervisor (TLFS 2.4)
 	if (IsHyperVSyntheticMsr(guestRegisters->rcx)) {
 		MSR msr = { 0 };
 		msr.Low = static_cast<ULONG>(guestRegisters->rax);
 		msr.High = static_cast<ULONG>(guestRegisters->rdx);
 		__writemsr(static_cast<ULONG>(guestRegisters->rcx), msr.Content);
-		return;
+		return true;
 	}
 
-	if (IsValidMsr(guestRegisters->rcx)) {
-		MSR msr = { 0 };
-		msr.Low = static_cast<ULONG>(guestRegisters->rax);
-		msr.High = static_cast<ULONG>(guestRegisters->rdx);
-		__writemsr(static_cast<ULONG>(guestRegisters->rcx), msr.Content);
+	if (!IsValidMsr(guestRegisters->rcx)) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Guest attempted to write unsupported MSR: 0x%llx", guestRegisters->rcx);
+		return false;
 	}
+
+	MSR msr = { 0 };
+	msr.Low = static_cast<ULONG>(guestRegisters->rax);
+	msr.High = static_cast<ULONG>(guestRegisters->rdx);
+	__writemsr(static_cast<ULONG>(guestRegisters->rcx), msr.Content);
+	return true;
 }
 
 /*
@@ -156,7 +174,7 @@ void RegistersHandler::HandleMSRWrite(_In_ PGUEST_REGS guestRegisters) {
 * Returns:
 * There is no return value.
 */
-void RegistersHandler::HandleCpuid(_Inout_ PGUEST_REGS guestRegisters) {
+bool RegistersHandler::HandleCpuid(_Inout_ PGUEST_REGS guestRegisters) {
 	int cpuInfo[4] = { 0 };
 
 	__cpuidex(cpuInfo, static_cast<int>(guestRegisters->rax), static_cast<int>(guestRegisters->rcx));
@@ -176,4 +194,5 @@ void RegistersHandler::HandleCpuid(_Inout_ PGUEST_REGS guestRegisters) {
 	guestRegisters->rbx = cpuInfo[1];
 	guestRegisters->rcx = cpuInfo[2];
 	guestRegisters->rdx = cpuInfo[3];
+	return true;
 }

@@ -539,11 +539,9 @@ bool Ept::HandleHookedPage(_Inout_ EPT_HOOKED_PAGE_DETAIL* hookedEntryDetails,
 
 	if (operationAllowed) {
 		SetPML1AndInvalidateTLB(hookedEntryDetails->EntryAddress, hookedEntryDetails->OriginalEntry, SINGLE_CONTEXT);
-		GuestState[KeGetCurrentProcessorNumber()].IncrementRip = false;
 		*restoreHookAfterInstruction = true;
 	}
 	else if (handled) {
-		GuestState[KeGetCurrentProcessorNumber()].IncrementRip = false;
 		EventHandler::InjectPageFault(guestLinearAddress, pageFaultErrorCode);
 	}
 	return handled;

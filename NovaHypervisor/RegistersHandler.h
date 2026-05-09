@@ -14,8 +14,8 @@ inline bool IsHyperVSyntheticMsr(_In_ ULONG64 msr) {
 
 namespace RegistersHandler {
 	bool IsValidMsr(_In_ ULONG64 rcx);
-	void HandleCRAccess(_In_ PGUEST_REGS guestRegisters);
-	void HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters);
-	void HandleMSRWrite(_In_ PGUEST_REGS guestRegisters);
-	void HandleCpuid(_Inout_ PGUEST_REGS guestRegisters);
+	bool HandleCRAccess(_In_ PGUEST_REGS guestRegisters);
+	bool HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters);
+	bool HandleMSRWrite(_In_ PGUEST_REGS guestRegisters);
+	bool HandleCpuid(_Inout_ PGUEST_REGS guestRegisters);
 };

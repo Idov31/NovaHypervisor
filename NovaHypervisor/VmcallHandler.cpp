@@ -84,24 +84,22 @@ bool HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers, _In_
 		return false;
 	HYPERCALL_INPUT_VALUE hypercall = { 0 };
 	hypercall.Flags = registers->rcx;
+	const bool flushVirtualAddressSpace =
+		hypercall.Fields.CallCode == HvSwitchVirtualAddressSpace ||
+		hypercall.Fields.CallCode == HvFlushVirtualAddressSpace ||
+		hypercall.Fields.CallCode == HvFlushVirtualAddressList ||
+		hypercall.Fields.CallCode == HvCallFlushVirtualAddressSpaceEx ||
+		hypercall.Fields.CallCode == HvCallFlushVirtualAddressListEx;
+	const bool flushGuestPhysicalAddressSpace =
+		hypercall.Fields.CallCode == HvCallFlushGuestPhysicalAddressSpace ||
+		hypercall.Fields.CallCode == HvCallFlushGuestPhysicalAddressList;
 
-	switch (hypercall.Fields.CallCode)
-	{
-		case HvSwitchVirtualAddressSpace:
-		case HvFlushVirtualAddressSpace:
-		case HvFlushVirtualAddressList:
-		case HvCallFlushVirtualAddressSpaceEx:
-		case HvCallFlushVirtualAddressListEx:
-			VmxHelper::InvalidateVpid();
-			break;
-
-	case HvCallFlushGuestPhysicalAddressSpace:
-	case HvCallFlushGuestPhysicalAddressList:
-		VmxHelper::InvalidateEpt(eptInstance->GetEptPointerFlags());
-		break;
-	}
-	UINT64 guestRsp = registers->rsp;
 	AsmHypervVmcall(reinterpret_cast<UINT64>(registers), guestFxState);
-	registers->rsp = guestRsp;
+
+	if (flushVirtualAddressSpace)
+		VmxHelper::InvalidateVpid();
+	else if (flushGuestPhysicalAddressSpace)
+		VmxHelper::InvalidateEpt(eptInstance->GetEptPointerFlags());
+
 	return true;
 }
