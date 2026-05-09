@@ -39,8 +39,12 @@ void InitializeGuest(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PV
 	UNREFERENCED_PARAMETER(deferredContext);
 
 	AsmVmxSaveState();
-	KeSignalCallDpcSynchronize(systemArgument2);
-	KeSignalCallDpcDone(systemArgument1);
+
+	if (systemArgument2)
+		KeSignalCallDpcSynchronize(systemArgument2);
+
+	if (systemArgument1)
+		KeSignalCallDpcDone(systemArgument1);
 }
 
 /*
@@ -88,8 +92,11 @@ void TerminateGuest(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVO
 	if (!VmxTerminate())
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "There was an error terminating vmx");
 
-	KeSignalCallDpcSynchronize(systemArgument2);
-	KeSignalCallDpcDone(systemArgument1);
+	if (systemArgument2)
+		KeSignalCallDpcSynchronize(systemArgument2);
+
+	if (systemArgument1)
+		KeSignalCallDpcDone(systemArgument1);
 }
 
 /*
@@ -301,7 +308,8 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 
 	ULONG secondaryProcBasedVmExecControls = VmxHelper::AdjustControls(
 		CPU_BASED_CTL2_RDTSCP | CPU_BASED_CTL2_ENABLE_EPT | 
-		CPU_BASED_CTL2_ENABLE_INVPCID | CPU_BASED_CTL2_ENABLE_XSAVE_XRSTORS | CPU_BASED_CTL2_ENABLE_VPID |
+		//CPU_BASED_CTL2_ENABLE_INVPCID | CPU_BASED_CTL2_ENABLE_XSAVE_XRSTORS | CPU_BASED_CTL2_ENABLE_VPID |
+		CPU_BASED_CTL2_ENABLE_INVPCID | CPU_BASED_CTL2_ENABLE_XSAVE_XRSTORS |
 		CPU_BASED_CTL2_ENABLE_USER_WAIT_AND_PAUSE,
 		MSR_IA32_VMX_PROCBASED_CTLS2);
 
@@ -463,8 +471,10 @@ bool AllocateVmStructures(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_op
 	}
 	GuestState[currentProcessorId].MsrBitmapPhysical = GetPhysicalAddress(GuestState[currentProcessorId].MsrBitmap);
 
-	KeSignalCallDpcSynchronize(systemArgument2);
-	KeSignalCallDpcDone(systemArgument1);
+	if (systemArgument2)
+		KeSignalCallDpcSynchronize(systemArgument2);
+	if (systemArgument1)
+		KeSignalCallDpcDone(systemArgument1);
 	return true;
 }
 
@@ -613,8 +623,12 @@ void UnhookAllPagesDpc(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ 
 	UNREFERENCED_PARAMETER(deferredContext);
 
 	AsmVmxVmcall(VMCALL_UNHOOK_ALL_PAGES, NULL, NULL, NULL);
-	KeSignalCallDpcSynchronize(systemArgument2);
-	KeSignalCallDpcDone(systemArgument1);
+
+	if (systemArgument2)
+		KeSignalCallDpcSynchronize(systemArgument2);
+
+	if (systemArgument1)
+		KeSignalCallDpcDone(systemArgument1);
 }
 
 /*
@@ -635,6 +649,10 @@ void UnhookSinglePage(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ P
 
 	if (deferredContext)
 		AsmVmxVmcall(VMCALL_UNHOOK_SINGLE_PAGE, reinterpret_cast<UINT64>(deferredContext), NULL, NULL);
-	KeSignalCallDpcSynchronize(systemArgument2);
-	KeSignalCallDpcDone(systemArgument1);
+
+	if (systemArgument2)
+		KeSignalCallDpcSynchronize(systemArgument2);
+
+	if (systemArgument1)
+		KeSignalCallDpcDone(systemArgument1);
 }
