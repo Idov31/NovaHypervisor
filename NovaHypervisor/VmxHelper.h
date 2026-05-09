@@ -14,6 +14,7 @@ namespace VmxHelper {
 	void DisableVmxOperation();
 	bool IsVmxSupported();
 	bool IsXstateSaveAreaSupported();
+	bool IsCurrentHypervisorHyperV();
 	bool ClearVmcsState(_Inout_ VmState* state);
 	bool LoadVmcs(_Inout_ VmState* state);
 	void ResumeToNextInstruction();

@@ -105,7 +105,7 @@ bool HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers, _In_
 		VmxHelper::InvalidateEpt(eptInstance->GetEptPointerFlags());
 		VmxHelper::InvalidateVpid();
 
-		/*NovaHypervisorLog(TRACE_FLAG_DEBUG,
+		NovaHypervisorLog(TRACE_FLAG_DEBUG,
 			"Forwarded Hyper-V TLB hypercall code=0x%x fast=%u repCount=%u repStart=%u inputGpa=0x%llx outputGpa=0x%llx status=0x%llx localFlush=INVEPT_SINGLE_CONTEXT%s",
 			static_cast<ULONG>(hypercall.Fields.CallCode),
 			static_cast<ULONG>(hypercall.Fields.Fast),
@@ -114,7 +114,7 @@ bool HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers, _In_
 			inputGpa,
 			outputGpa,
 			registers->rax,
-			VpidSupported ? "+INVVPID" : "");*/
+			VpidSupported ? "+INVVPID" : "");
 	}
 	/*else {
 		NovaHypervisorLog(TRACE_FLAG_DEBUG,

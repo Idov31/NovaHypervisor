@@ -235,9 +235,45 @@ bool VmxHelper::IsXstateSaveAreaSupported() {
 	return true;
 }
 
+/*
+* Description:
+* IsCurrentHypervisorHyperV is responsible for checking whether the top-level hypervisor is Hyper-V.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* @isHyperV [bool] -- True if CPUID reports Microsoft Hyper-V as the active hypervisor.
+*/
+bool VmxHelper::IsCurrentHypervisorHyperV() {
+	int processorFeatures[4] = { 0 };
+	__cpuidex(processorFeatures, static_cast<int>(CPUID_PROCESSOR_AND_PROCESSOR_FEATURE_IDENTIFIERS), 0);
+
+	if (!(static_cast<ULONG>(processorFeatures[2]) & HYPERV_HYPERVISOR_PRESENT_BIT))
+		return false;
+
+	int hypervisorVendor[4] = { 0 };
+	__cpuidex(hypervisorVendor, static_cast<int>(HYPERV_CPUID_VENDOR_AND_MAX_FUNCTIONS), 0);
+
+	return static_cast<ULONG>(hypervisorVendor[1]) == HYPERV_CPUID_VENDOR_MICROSOFT_EBX &&
+		static_cast<ULONG>(hypervisorVendor[2]) == HYPERV_CPUID_VENDOR_MICROSOFT_ECX &&
+		static_cast<ULONG>(hypervisorVendor[3]) == HYPERV_CPUID_VENDOR_MICROSOFT_EDX;
+}
+
+/*
+* Description:
+* InitializeVpidSupport is responsible for enabling VPID only when Nova can safely maintain stale-translation state.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* There is no return value.
+*/
 void VmxHelper::InitializeVpidSupport() {
 	MSR secondaryControls = { 0 };
 	IA32_VMX_EPT_VPID_CAP_REGISTER eptVpidCapabilities = { 0 };
+	const bool runningOnHyperV = IsCurrentHypervisorHyperV();
 
 	secondaryControls.Content = __readmsr(MSR_IA32_VMX_PROCBASED_CTLS2);
 	eptVpidCapabilities.Flags = __readmsr(MSR_IA32_VMX_EPT_VPID_CAP);
@@ -249,9 +285,18 @@ void VmxHelper::InitializeVpidSupport() {
 		eptVpidCapabilities.InvvpidAllContexts;
 
 	if (VpidSupported) {
-		VpidSupported = false; // Disabled until Nova has a VMX-root-safe SMP VPID shootdown path.
+		if (runningOnHyperV) {
+			VpidSupported = false; // Hyper-V TLB hypercalls require a VMX-root-safe SMP VPID shootdown path.
+			NovaHypervisorLog(TRACE_FLAG_INFO,
+				"VPID is supported by the exposed VMX capabilities but is intentionally disabled under Hyper-V. "
+				"Secondary allowed-1: 0x%x, EPT/VPID capabilities: 0x%llx",
+				secondaryControls.High,
+				eptVpidCapabilities.Flags);
+			return;
+		}
+
 		NovaHypervisorLog(TRACE_FLAG_INFO,
-			"VPID is supported by the exposed VMX capabilities but is intentionally disabled. "
+			"VPID is supported by the exposed VMX capabilities and is enabled. "
 			"Secondary allowed-1: 0x%x, EPT/VPID capabilities: 0x%llx",
 			secondaryControls.High,
 			eptVpidCapabilities.Flags);
@@ -264,6 +309,16 @@ void VmxHelper::InitializeVpidSupport() {
 		eptVpidCapabilities.Flags);
 }
 
+/*
+* Description:
+* GetVpidTagForProcessor is responsible for deriving Nova's VPID tag for the current logical processor.
+*
+* Parameters:
+* @processorIndex [_In_ ULONG] -- The logical processor index.
+*
+* Returns:
+* @vpidTag		   [UINT16]	   -- The VPID tag assigned to the logical processor.
+*/
 UINT16 VmxHelper::GetVpidTagForProcessor(_In_ ULONG processorIndex) {
 	return static_cast<UINT16>(VPID_TAG_BASE + processorIndex);
 }
