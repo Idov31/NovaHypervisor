@@ -81,9 +81,13 @@ typedef struct _EVENT_INFORMATION
 }EVENT_INFORMATION, * PEVENT_INFORMATION;
 
 namespace EventHandler {
+	void ClearPendingInjection();
 	void SetupInstructionLength();
+	bool ReinjectEventFromIdtVectoring();
+	bool InjectEventFromVmExitInterruption(_In_ VMEXIT_INTERRUPT_INFO interruptExit);
 	void InjectInterruption(_In_ INTERRUPT_TYPE interruptionType, _In_ EXCEPTION_VECTORS vector, _In_ bool deliverErrorCode, _In_ ULONG32 errorCode);
 	void InjectBreakpoint();
 	void InjectGeneralProtection();
 	void InjectUndefinedOpcode();
+	void InjectPageFault(_In_ ULONG64 faultAddress, _In_ ULONG32 errorCode);
 };

@@ -4,8 +4,7 @@
 #include "DeviceControl.h"
 #include "Ept.h"
 #include "VmxHelper.h"
-#include "WppDefinitions.h"
-#include "NovaHypervisor.tmh"
+#include "ComLogger.h"
 
 constexpr wchar_t DEVICE_NAME[] = L"\\Device\\NovaHypervisor";
 constexpr wchar_t SYMBOLIC_LINK[] = L"\\??\\NovaHypervisor";

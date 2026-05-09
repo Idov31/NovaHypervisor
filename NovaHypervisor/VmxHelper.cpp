@@ -44,7 +44,7 @@ void VmxHelper::DisableVmxOperation() {
 * Returns:
 * @supported [bool] -- True if VMX is supported, else false.
 */
- bool VmxHelper::IsVmxSupported() {
+bool VmxHelper::IsVmxSupported() {
 	IA32_FEATURE_CONTROL_MSR control = { 0 };
 	CPUID cpuidResult = { 0 };
 
@@ -194,12 +194,133 @@ void VmxHelper::ResumeToNextInstruction() {
 * Returns:
 * @ctl	[ULONG]		 -- The adjusted control.
 */
- ULONG VmxHelper::AdjustControls(_In_ ULONG ctl, _In_ ULONG msr) {
+ULONG VmxHelper::AdjustControls(_In_ ULONG ctl, _In_ ULONG msr) {
 	MSR msrValue = { 0 };
 	msrValue.Content = __readmsr(msr);
 	ctl &= msrValue.High;
 	ctl |= msrValue.Low;
 	return ctl;
+}
+
+bool VmxHelper::IsXstateSaveAreaSupported() {
+	if (!(__readcr4() & CR4_OSXSAVE)) {
+		NovaHypervisorLog(TRACE_FLAG_INFO, "CR4.OSXSAVE is not enabled; VM-exit will use FXSAVE/FXRSTOR.");
+		return true;
+	}
+
+	int cpuInfo[4] = { 0 };
+	__cpuidex(cpuInfo, static_cast<int>(CPUID_EXTENDED_STATE_ENUMERATION), 0);
+	const ULONG currentRequiredSize = static_cast<ULONG>(cpuInfo[1]);
+	const ULONG maximumSupportedSize = static_cast<ULONG>(cpuInfo[2]);
+	const ULONG64 xcr0 = _xgetbv(0);
+
+	if (currentRequiredSize == 0 ||
+		currentRequiredSize > MAX_XSAVE_AREA_SIZE ||
+		maximumSupportedSize > MAX_XSAVE_AREA_SIZE) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR,
+			"Unsupported XSAVE area size for VM-exit preservation. XCR0=0x%llx currentRequired=0x%x maximumSupported=0x%x reserved=0x%llx",
+			xcr0,
+			currentRequiredSize,
+			maximumSupportedSize,
+			MAX_XSAVE_AREA_SIZE);
+		return false;
+	}
+
+	NovaHypervisorLog(TRACE_FLAG_INFO,
+		"VM-exit will use XSAVE/XRSTOR. XCR0=0x%llx currentRequiredSize=0x%x maximumSupportedSize=0x%x reservedSize=0x%llx",
+		xcr0,
+		currentRequiredSize,
+		maximumSupportedSize,
+		MAX_XSAVE_AREA_SIZE);
+	return true;
+}
+
+/*
+* Description:
+* IsCurrentHypervisorHyperV is responsible for checking whether the top-level hypervisor is Hyper-V.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* @isHyperV [bool] -- True if CPUID reports Microsoft Hyper-V as the active hypervisor.
+*/
+bool VmxHelper::IsCurrentHypervisorHyperV() {
+	int processorFeatures[4] = { 0 };
+	__cpuidex(processorFeatures, static_cast<int>(CPUID_PROCESSOR_AND_PROCESSOR_FEATURE_IDENTIFIERS), 0);
+
+	if (!(static_cast<ULONG>(processorFeatures[2]) & HYPERV_HYPERVISOR_PRESENT_BIT))
+		return false;
+
+	int hypervisorVendor[4] = { 0 };
+	__cpuidex(hypervisorVendor, static_cast<int>(HYPERV_CPUID_VENDOR_AND_MAX_FUNCTIONS), 0);
+
+	return static_cast<ULONG>(hypervisorVendor[1]) == HYPERV_CPUID_VENDOR_MICROSOFT_EBX &&
+		static_cast<ULONG>(hypervisorVendor[2]) == HYPERV_CPUID_VENDOR_MICROSOFT_ECX &&
+		static_cast<ULONG>(hypervisorVendor[3]) == HYPERV_CPUID_VENDOR_MICROSOFT_EDX;
+}
+
+/*
+* Description:
+* InitializeVpidSupport is responsible for enabling VPID only when Nova can safely maintain stale-translation state.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* There is no return value.
+*/
+void VmxHelper::InitializeVpidSupport() {
+	MSR secondaryControls = { 0 };
+	IA32_VMX_EPT_VPID_CAP_REGISTER eptVpidCapabilities = { 0 };
+	const bool runningOnHyperV = IsCurrentHypervisorHyperV();
+
+	secondaryControls.Content = __readmsr(MSR_IA32_VMX_PROCBASED_CTLS2);
+	eptVpidCapabilities.Flags = __readmsr(MSR_IA32_VMX_EPT_VPID_CAP);
+
+	VpidSupported = (secondaryControls.High & CPU_BASED_CTL2_ENABLE_VPID) &&
+		eptVpidCapabilities.Invvpid &&
+		eptVpidCapabilities.InvvpidIndividualAddress &&
+		eptVpidCapabilities.InvvpidSingleContext &&
+		eptVpidCapabilities.InvvpidAllContexts;
+
+	if (VpidSupported) {
+		if (runningOnHyperV) {
+			VpidSupported = false; // Hyper-V TLB hypercalls require a VMX-root-safe SMP VPID shootdown path.
+			NovaHypervisorLog(TRACE_FLAG_INFO,
+				"VPID is supported by the exposed VMX capabilities but is intentionally disabled under Hyper-V. "
+				"Secondary allowed-1: 0x%x, EPT/VPID capabilities: 0x%llx",
+				secondaryControls.High,
+				eptVpidCapabilities.Flags);
+			return;
+		}
+
+		NovaHypervisorLog(TRACE_FLAG_INFO,
+			"VPID is supported by the exposed VMX capabilities and is enabled. "
+			"Secondary allowed-1: 0x%x, EPT/VPID capabilities: 0x%llx",
+			secondaryControls.High,
+			eptVpidCapabilities.Flags);
+		return;
+	}
+	NovaHypervisorLog(TRACE_FLAG_INFO,
+		"VPID is not supported by the exposed VMX capabilities and will remain disabled. "
+		"Secondary allowed-1: 0x%x, EPT/VPID capabilities: 0x%llx",
+		secondaryControls.High,
+		eptVpidCapabilities.Flags);
+}
+
+/*
+* Description:
+* GetVpidTagForProcessor is responsible for deriving Nova's VPID tag for the current logical processor.
+*
+* Parameters:
+* @processorIndex [_In_ ULONG] -- The logical processor index.
+*
+* Returns:
+* @vpidTag		   [UINT16]	   -- The VPID tag assigned to the logical processor.
+*/
+UINT16 VmxHelper::GetVpidTagForProcessor(_In_ ULONG processorIndex) {
+	return static_cast<UINT16>(VPID_TAG_BASE + processorIndex);
 }
 
 /*
@@ -214,6 +335,9 @@ void VmxHelper::ResumeToNextInstruction() {
 * There is no return value.
 */
 void VmxHelper::InvalidateVpid(_In_opt_ UINT64 vpid, _In_opt_ UINT64 address) {
+	if (!VpidSupported)
+		return;
+
 	INVVPID_DESCRIPTOR descriptor = { 0 };
 	InvvpidType type = InvvpidAllContext;
 
@@ -337,21 +461,6 @@ void VmxHelper::RestoreRegisters() {
 	AsmReloadIdtr(reinterpret_cast<PVOID>(idtrBase), idtrLimit);
 }
 
-/*
-* Description:
-* FindSystemDirectoryTableBase is responsible for getting the system process' directory table base.
-*
-* Parameters:
-* There are no parameters.
-*
-* Returns:
-* @directoryTableBase [UINT64] -- The system process' directory table base.
-*/
- UINT64 VmxHelper::FindSystemDirectoryTableBase() {
-	KPROCESS* SystemProcess = static_cast<PKPROCESS>(PsInitialSystemProcess);
-	return SystemProcess->DirectoryTableBase;
-}
-
  /*
  * Description:
  * FindKernelBaseAddress is responsible for finding the kernel base address.
@@ -376,7 +485,10 @@ void VmxHelper::RestoreRegisters() {
 
 		 if (_wcsnicmp(loadedModulesEntry->BaseDllName.Buffer, KERNEL_NAME, KERNEL_NAME_LEN) == 0) {
 			 KernelBaseInfo.KernelBaseAddress = reinterpret_cast<UINT64>(loadedModulesEntry->DllBase);
-			 KernelBaseInfo.KernelSize = loadedModulesEntry->SizeOfImageNotRounded;
+			 KernelBaseInfo.KernelSize = loadedModulesEntry->SizeOfImage;
+			 NovaHypervisorLog(TRACE_FLAG_INFO, "Kernel image range: 0x%llx - 0x%llx",
+				 KernelBaseInfo.KernelBaseAddress,
+				 KernelBaseInfo.KernelBaseAddress + KernelBaseInfo.KernelSize);
 			 status = STATUS_SUCCESS;
 			 break;
 		 }

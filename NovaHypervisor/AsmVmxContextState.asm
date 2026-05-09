@@ -73,6 +73,19 @@ AsmHypervVmcall PROC
     push rcx
     push rax
 
+    ; Save the FXSAVE frame pointer passed in RDX. Hyper-V may have exposed
+    ; XMM fast hypercalls before Nova was loaded, so CPUID masking alone is not
+    ; enough: forward XMM0-XMM5 from the guest frame and capture any fast-output
+    ; values back into that same frame.
+    push rdx
+
+    movdqu xmm0, xmmword ptr [rdx+0a0h]
+    movdqu xmm1, xmmword ptr [rdx+0b0h]
+    movdqu xmm2, xmmword ptr [rdx+0c0h]
+    movdqu xmm3, xmmword ptr [rdx+0d0h]
+    movdqu xmm4, xmmword ptr [rdx+0e0h]
+    movdqu xmm5, xmmword ptr [rdx+0f0h]
+
     ; Unpacking the registers from rcx
     mov rax, qword ptr [rcx+0h]
     mov rdx, qword ptr [rcx+10h]
@@ -95,24 +108,33 @@ AsmHypervVmcall PROC
 
     vmcall
 
-    ; Restoring the state
-    pop rcx
+    ; Save Hyper-V's returned RAX/RCX before recovering local pointers.
+    push rax
+    push rcx
+    mov rcx, qword ptr [rsp+10h]
 
-    mov qword ptr [rcx+0h], rax
-    mov qword ptr [rcx+10h], rdx
-    mov qword ptr [rcx+18h], rbx
-    mov qword ptr [rcx+28h], rbp
-    mov qword ptr [rcx+30h], rsi
-    mov qword ptr [rcx+38h], rdi
-    mov qword ptr [rcx+40h], r8
-    mov qword ptr [rcx+48h], r9
-    mov qword ptr [rcx+50h], r10
-    mov qword ptr [rcx+58h], r11
-    mov qword ptr [rcx+60h], r12
-    mov qword ptr [rcx+68h], r13
-    mov qword ptr [rcx+70h], r14
-    mov qword ptr [rcx+78h], r15
-    mov qword ptr [rcx+08h], rcx
+    mov rax, qword ptr [rsp+18h]
+    movdqu xmmword ptr [rax+0a0h], xmm0
+    movdqu xmmword ptr [rax+0b0h], xmm1
+    movdqu xmmword ptr [rax+0c0h], xmm2
+    movdqu xmmword ptr [rax+0d0h], xmm3
+    movdqu xmmword ptr [rax+0e0h], xmm4
+    movdqu xmmword ptr [rax+0f0h], xmm5
+
+    ; Copy only the TLFS-documented volatile/output registers back to the
+    ; guest-visible frame: RAX result, RCX rep index, and RDX/R8 fast output.
+    ; Other guest GPRs remain exactly as they were at VM-exit.
+    mov r10, qword ptr [rsp+10h]
+    mov rax, qword ptr [rsp+08h]
+    mov qword ptr [r10+0h], rax
+    mov rax, qword ptr [rsp]
+    mov qword ptr [r10+08h], rax
+    mov qword ptr [r10+10h], rdx
+    mov qword ptr [r10+40h], r8
+
+    add rsp, 10h
+    pop rcx
+    add rsp, 08h
 
     pop rax
     pop rcx
@@ -166,7 +188,11 @@ AsmVmxSaveState PROC
 	sub rsp, 0100h
 	mov rcx, rsp
 
+    ; Reserve Windows x64 shadow space and align the stack for the C++ helper
+    ; without moving the guest stack pointer passed in RCX.
+	sub rsp, 028h
 	call VirtualizeProcessor
+	add rsp, 028h
 
 	; Shouldn't be reached, added for fail safe.
 	int 3

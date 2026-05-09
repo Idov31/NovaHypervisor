@@ -5,8 +5,14 @@
 #include "RegistersHandler.h"
 #include "EventInjection.h"
 #include "VmcallHandler.h"
-#include "WppDefinitions.h"
-#include "VmexitHandler.tmh"
+#include "ComLogger.h"
+
+enum class VmExitAction : UINT8 {
+	ResumeCurrentRip,
+	AdvanceRip,
+	InjectEvent,
+	ShutdownVmx
+};
 
 constexpr ULONG64 NO_HYPERV_MAGIC = 0x4e4f485950455256;
 constexpr ULONG64 VMCALL_MAGIC = 0x564d43414c4c;
@@ -17,6 +23,6 @@ constexpr auto IsSelfVmcall = [](ULONG64 r10, ULONG64 r11, ULONG64 r12) -> bool 
 };
 
 extern "C" {
-	void VmResumeInstruction();
-	bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters);
+	void VmResumeFailure();
+	bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState);
 }

@@ -8,6 +8,8 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	PDEVICE_OBJECT deviceObject = nullptr;
 	NTSTATUS status = STATUS_SUCCESS;
 	KernelBaseInfo = { 0 };
+	HostDirectoryTableBase = 0;
+	VpidSupported = false;
 
 	// Getting the OS version.
 	RTL_OSVERSIONINFOW osVersion = { sizeof(osVersion) };
@@ -16,17 +18,28 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	if (!NT_SUCCESS(result))
 		return STATUS_ABANDONED;
 
-	WPP_INIT_TRACING(DriverObject, RegistryPath);
+	NovaLogger.Initialize();
 	WindowsBuildNumber = osVersion.dwBuildNumber;
 
 	// Loading ExAllocatePool2 if available.
 	UNICODE_STRING routineName = RTL_CONSTANT_STRING(L"ExAllocatePool2");
 	AllocatePool2 = MmGetSystemRoutineAddress(&routineName);
+
+	KAPC_STATE apcState = { 0 };
+	KeStackAttachProcess(PsInitialSystemProcess, &apcState);
+	HostDirectoryTableBase = __readcr3() & ~0xfffULL;
+	KeUnstackDetachProcess(&apcState);
+
+	if (!HostDirectoryTableBase) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to capture stable host CR3");
+		return STATUS_UNSUCCESSFUL;
+	}
+	NovaHypervisorLog(TRACE_FLAG_INFO, "Host CR3: 0x%llx", HostDirectoryTableBase);
+
 	status = VmxHelper::FindKernelBaseAddress();
 
 	if (!NT_SUCCESS(status)) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to find kernel base address");
-		WPP_CLEANUP(DriverObject);
 		return status;
 	}
 
@@ -36,7 +49,6 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	__except (EXCEPTION_EXECUTE_HANDLER) {
 		status = GetExceptionCode();
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Exception occurred while initializing the pool manager: (0x%08X)", status);
-		WPP_CLEANUP(DriverObject);
 		return status;
 	}
 
@@ -48,7 +60,6 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 
 	if (!NT_SUCCESS(status)) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to create device object (0x%08X)", status);
-		WPP_CLEANUP(DriverObject);
 		return status;
 	}
 	status = IoCreateSymbolicLink(&symLinkName, &deviceName);
@@ -56,7 +67,6 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	if (!NT_SUCCESS(status)) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to create symbolic link (0x%08X)", status);
 		IoDeleteDevice(deviceObject);
-		WPP_CLEANUP(DriverObject);
 		return status;
 	}
 
@@ -77,7 +87,6 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to initialize the hypervisor (0x%08X)", status);
 		IoDeleteSymbolicLink(&symLinkName);
 		IoDeleteDevice(deviceObject);
-		WPP_CLEANUP(DriverObject);
 		return status;
 	}
 
@@ -98,7 +107,6 @@ void NovaUnload(_In_ PDRIVER_OBJECT DriverObject) {
 	IoDeleteDevice(DriverObject->DeviceObject);
 
 	NovaHypervisorLog(TRACE_FLAG_INFO, "Driver unloaded");
-	WPP_CLEANUP(DriverObject);
 }
 
 /*

@@ -5,8 +5,7 @@
 #include "MemoryHelper.hpp"
 #include "HypervisorDefinitions.h"
 #include "RequestList.hpp"
-#include "WppDefinitions.h"
-#include "PoolManager.tmh"
+#include "ComLogger.h"
 
 constexpr SIZE_T MAX_INITIAL_ALLOCATIONS = 10;
 constexpr SIZE_T MAX_WAIT_ITERATIONS = 10;
