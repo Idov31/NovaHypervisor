@@ -210,22 +210,27 @@ bool VmxHelper::IsXstateSaveAreaSupported() {
 
 	int cpuInfo[4] = { 0 };
 	__cpuidex(cpuInfo, static_cast<int>(CPUID_EXTENDED_STATE_ENUMERATION), 0);
-	const ULONG requiredSize = static_cast<ULONG>(cpuInfo[1]);
+	const ULONG currentRequiredSize = static_cast<ULONG>(cpuInfo[1]);
+	const ULONG maximumSupportedSize = static_cast<ULONG>(cpuInfo[2]);
 	const ULONG64 xcr0 = _xgetbv(0);
 
-	if (requiredSize == 0 || requiredSize > MAX_XSAVE_AREA_SIZE) {
+	if (currentRequiredSize == 0 ||
+		currentRequiredSize > MAX_XSAVE_AREA_SIZE ||
+		maximumSupportedSize > MAX_XSAVE_AREA_SIZE) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR,
-			"Unsupported XSAVE area size for VM-exit preservation. XCR0=0x%llx required=0x%x max=0x%llx",
+			"Unsupported XSAVE area size for VM-exit preservation. XCR0=0x%llx currentRequired=0x%x maximumSupported=0x%x reserved=0x%llx",
 			xcr0,
-			requiredSize,
+			currentRequiredSize,
+			maximumSupportedSize,
 			MAX_XSAVE_AREA_SIZE);
 		return false;
 	}
 
 	NovaHypervisorLog(TRACE_FLAG_INFO,
-		"VM-exit will use XSAVE/XRSTOR. XCR0=0x%llx requiredSize=0x%x reservedSize=0x%llx",
+		"VM-exit will use XSAVE/XRSTOR. XCR0=0x%llx currentRequiredSize=0x%x maximumSupportedSize=0x%x reservedSize=0x%llx",
 		xcr0,
-		requiredSize,
+		currentRequiredSize,
+		maximumSupportedSize,
 		MAX_XSAVE_AREA_SIZE);
 	return true;
 }
@@ -244,8 +249,12 @@ void VmxHelper::InitializeVpidSupport() {
 		eptVpidCapabilities.InvvpidAllContexts;
 
 	if (VpidSupported) {
-		VpidSupported = false; // TODO: For debugging purposes.
-		NovaHypervisorLog(TRACE_FLAG_INFO, "VPID is supported by the exposed VMX capabilities and will be enabled.");
+		VpidSupported = false; // Intentionally disabled while stabilizing the nested Hyper-V path.
+		NovaHypervisorLog(TRACE_FLAG_INFO,
+			"VPID is supported by the exposed VMX capabilities but is intentionally disabled. "
+			"Secondary allowed-1: 0x%x, EPT/VPID capabilities: 0x%llx",
+			secondaryControls.High,
+			eptVpidCapabilities.Flags);
 		return;
 	}
 	NovaHypervisorLog(TRACE_FLAG_INFO,

@@ -50,6 +50,36 @@ namespace {
 			return false;
 		}
 
+		ULONG requestedSize = 0x240;
+
+		for (ULONG stateComponent = 2; stateComponent < 64; stateComponent++) {
+			if (!(requestedMask & (1ULL << stateComponent)))
+				continue;
+
+			int stateInfo[4] = { 0 };
+			__cpuidex(stateInfo, static_cast<int>(CPUID_EXTENDED_STATE_ENUMERATION), static_cast<int>(stateComponent));
+
+			const ULONG componentSize = static_cast<ULONG>(stateInfo[0]);
+			const ULONG componentOffset = static_cast<ULONG>(stateInfo[1]);
+
+			if (componentSize == 0 || componentOffset == 0)
+				continue;
+
+			const ULONG componentEnd = componentOffset + componentSize;
+
+			if (componentEnd > requestedSize)
+				requestedSize = componentEnd;
+		}
+
+		if (requestedSize > MAX_XSAVE_AREA_SIZE) {
+			NovaHypervisorLog(TRACE_FLAG_ERROR,
+				"Guest XSETBV requires unsupported XSAVE area size: XCR0=0x%llx required=0x%x max=0x%llx",
+				requestedMask,
+				requestedSize,
+				MAX_XSAVE_AREA_SIZE);
+			return false;
+		}
+
 		_xsetbv(static_cast<ULONG>(guestRegisters->rcx), requestedMask);
 		return true;
 	}

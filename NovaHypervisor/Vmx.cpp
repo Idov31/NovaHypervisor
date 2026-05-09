@@ -333,10 +333,26 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	__vmx_vmwrite(PIN_BASED_VM_EXEC_CONTROL, VmxHelper::AdjustControls(0,
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_PINBASED_CTLS : MSR_IA32_VMX_PINBASED_CTLS));
 
-	__vmx_vmwrite(VM_EXIT_CONTROLS, VmxHelper::AdjustControls(VM_EXIT_IA32E_MODE,
+	const ULONG vmExitControls =
+		VM_EXIT_IA32E_MODE |
+		VM_EXIT_SAVE_GUEST_PAT |
+		VM_EXIT_LOAD_HOST_PAT |
+		VM_EXIT_SAVE_GUEST_EFER |
+		VM_EXIT_LOAD_HOST_EFER;
+	const ULONG vmEntryControls =
+		VM_ENTRY_IA32E_MODE |
+		VM_ENTRY_LOAD_GUEST_PAT |
+		VM_ENTRY_LOAD_GUEST_EFER;
+
+	__vmx_vmwrite(GUEST_IA32_PAT, __readmsr(MSR_IA32_PAT));
+	__vmx_vmwrite(GUEST_IA32_EFER, __readmsr(MSR_IA32_EFER));
+	__vmx_vmwrite(HOST_IA32_PAT, __readmsr(MSR_IA32_PAT));
+	__vmx_vmwrite(HOST_IA32_EFER, __readmsr(MSR_IA32_EFER));
+
+	__vmx_vmwrite(VM_EXIT_CONTROLS, VmxHelper::AdjustControls(vmExitControls,
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_EXIT_CTLS : MSR_IA32_VMX_EXIT_CTLS));
 
-	__vmx_vmwrite(VM_ENTRY_CONTROLS, VmxHelper::AdjustControls(VM_ENTRY_IA32E_MODE,
+	__vmx_vmwrite(VM_ENTRY_CONTROLS, VmxHelper::AdjustControls(vmEntryControls,
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_ENTRY_CTLS : MSR_IA32_VMX_ENTRY_CTLS));
 
 	__vmx_vmwrite(CR0_GUEST_HOST_MASK, 0);
