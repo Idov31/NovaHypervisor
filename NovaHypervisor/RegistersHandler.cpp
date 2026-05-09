@@ -1,6 +1,37 @@
 #include "pch.h"
 #include "RegistersHandler.h"
 
+bool RegistersHandler::IsHyperVSyntheticMsr(_In_ ULONG64 msr) {
+	switch (msr) {
+	case HV_X64_MSR_GUEST_OS_ID:
+	case HV_X64_MSR_HYPERCALL:
+	case HV_X64_MSR_VP_INDEX:
+	case HV_X64_MSR_RESET:
+	case HV_X64_MSR_VP_RUNTIME:
+	case HV_X64_MSR_TIME_REF_COUNT:
+	case HV_X64_MSR_REFERENCE_TSC:
+	case HV_X64_MSR_TSC_FREQUENCY:
+	case HV_X64_MSR_APIC_FREQUENCY:
+	case HV_X64_MSR_NPIEP_CONFIG:
+	case HV_X64_MSR_GUEST_IDLE:
+	case HV_X64_MSR_REENLIGHTENMENT_CONTROL:
+	case HV_X64_MSR_TSC_EMULATION_CONTROL:
+	case HV_X64_MSR_TSC_EMULATION_STATUS:
+	case HV_X64_MSR_STIME_UNHALTED_TIMER_CONFIG:
+	case HV_X64_MSR_STIME_UNHALTED_TIMER_COUNT:
+	case HV_X64_MSR_NESTED_VP_INDEX:
+		return true;
+	default:
+		return (msr >= HV_X64_MSR_EOI && msr <= HV_X64_MSR_TPR) ||
+			(msr >= HV_X64_MSR_SCONTROL && msr <= HV_X64_MSR_EOM) ||
+			(msr >= HV_X64_MSR_SINT0 && msr <= HV_X64_MSR_SINT15) ||
+			(msr >= HV_X64_MSR_STIMER0_CONFIG && msr <= HV_X64_MSR_STIMER3_COUNT) ||
+			(msr >= HV_X64_MSR_CRASH_P0 && msr <= HV_X64_MSR_CRASH_CTL) ||
+			(msr >= HV_X64_MSR_NESTED_SCONTROL && msr <= HV_X64_MSR_NESTED_EOM) ||
+			(msr >= HV_X64_MSR_NESTED_SINT0 && msr <= HV_X64_MSR_NESTED_SINT15);
+	}
+}
+
 /*
 * Description:
 * IsValidMsr is responsible for checking if an MSR is valid.
@@ -12,8 +43,8 @@
 * Returns true if the MSR is valid, otherwise false.
 */
 bool RegistersHandler::IsValidMsr(_In_ ULONG64 rcx) {
-	return (rcx <= 0x00001FFF || (rcx >= 0xC0000000 && rcx <= 0xC0001FFF)) ||
-		(rcx >= RESERVED_MSR_RANGE_LOW && rcx <= RESERVED_MSR_RANGE_HIGH);
+	return rcx <= 0x00001FFF || (rcx >= 0xC0000000 && rcx <= 0xC0001FFF) ||
+		IsHyperVSyntheticMsr(rcx);
 }
 
 /*
