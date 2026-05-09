@@ -5,8 +5,7 @@
 #include "GlobalVariables.h"
 #include "MemoryHelper.hpp"
 #include "Vmx.h"
-#include "WppDefinitions.h"
-#include "Ept.tmh"
+#include "ComLogger.h"
 
 enum EptPagePermissions {
 	EPT_PAGE_READ = 1,
@@ -39,14 +38,22 @@ private:
 	PVMM_EPT_PAGE_TABLE AllocateAndCreateIdentityPageTable();
 	bool LogicalProcessorInitialize();
 	void SetPML1AndInvalidateTLB(_Inout_ PEPT_PML1_ENTRY pml1Entry, _In_ EPT_PML1_ENTRY pml1Value, INVEPT_TYPE _In_ invalidationType);
-	bool HandleHookedPage(_Inout_ EPT_HOOKED_PAGE_DETAIL* hookedEntryDetails, 
-		_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification, _In_ ULONG64 guestVirtualAddress);
-	bool HandlePageHookExit(_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification, _In_ UINT64 guestPhysicalAddr);
+	bool IsAccessFromKernelImage(_In_ UINT64 guestRip) const;
+	bool HandleHookedPage(_Inout_ EPT_HOOKED_PAGE_DETAIL* hookedEntryDetails,
+		_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification,
+		_In_ ULONG64 guestLinearAddress,
+		_In_ ULONG64 guestRip,
+		_Out_ bool* restoreHookAfterInstruction);
+	bool HandlePageHookExit(_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification,
+		_In_ UINT64 guestPhysicalAddr,
+		_In_ ULONG64 guestLinearAddress,
+		_In_ ULONG64 guestRip);
 	bool PageHook(_In_ PVOID targetFunc, _In_ UINT8 permissions);
 	bool PageUnhook(_In_ UINT64 guestVirtualAddress);
 	void UnhookAllPages();
 	PEPT_HOOKED_PAGE_DETAIL GetHookedPage(_In_ UINT64 guestVirtualAddress);
 	bool IsHookExists(_In_ UINT64 guestVirtualAddress);
+	void ReleaseAllHookedPageRecords();
 
 public:
 	Ept();

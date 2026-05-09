@@ -27,14 +27,6 @@ constexpr ULONG WIN_1123H2 = 22631;
 constexpr ULONG WIN_1124H2 = 26100;
 
 // Structs
-typedef struct _KPROCESS
-{
-	DISPATCHER_HEADER Header;
-	LIST_ENTRY ProfileListHead;
-	ULONG_PTR DirectoryTableBase;
-	UCHAR Data[1];
-} KPROCESS, * PKPROCESS;
-
 typedef struct _KERNEL_BASE_INFO {
 	ULONG64 KernelBaseAddress;
 	ULONG KernelSize;

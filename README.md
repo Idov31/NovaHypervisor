@@ -88,20 +88,13 @@ To run the hypervisor, you will need to have a Windows 10 or later version insta
 
 ### Logging
 
-NovaHypervisor uses [WPP](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/wpp-software-tracing) logging as it provides easy to use interface that works also in VMX root. To be able to see the logs, make sure to create a trace session once:
+NovaHypervisor logs to the second serial port (COM2, I/O port `0x2F8`) using a small COM logger that can run at `HIGH_LEVEL` IRQL and in VMX root paths. It emits debug, info, and error records with a fixed `NovaHypervisor` prefix.
 
 ```cmd
-logman create trace "NovaHypervisorLogs" -p {e74c1035-77d4-4c5b-9088-77056fae3aa3} 0xffffffff 0xff -o C:\Path\To\NovaHypervisor.etl
+bcdedit /dbgsettings serial debugport:2 baudrate:115200
 ```
 
-Later on, whenever you want to start or end the logging session you can use:
-
-```cmd
-logman start "NovaHypervisorLogs"
-logman stop "NovaHypervisorLogs"
-```
-
-To view the logs you can use tools such as [TraceView](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/traceview).
+Capture the output from the host-side serial pipe or your VM's configured COM2 endpoint at `115200 8N1`. For example, in PuTTY you can attach to the serial transport configured for the VM and observe the log lines as the driver runs. You can also use the [connect-vm.ps1](./scripts/connect-vm.ps1) script to connect to the VM's COM2 port and display the logs in the console.
 
 ### Debugging
 
@@ -128,5 +121,7 @@ Where `<HOSTIP>` is the IP address of your host machine.
 ## Personal Thanks & Contributors
 
 - [Sinaei](https://x.com/Intel80x86): For his help with answering questions I had and for his amazing work on HyperDbg and Hypervisor From Scratch.
+
+- [Humza](https://github.com/humzak711): For his help with fixing bugs and suggesting improvements.
 
 - [memN0ps](https://github.com/memN0ps/): For his help with answering questions I had and pointing me to the right resources.

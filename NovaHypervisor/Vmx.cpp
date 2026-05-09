@@ -39,8 +39,12 @@ void InitializeGuest(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PV
 	UNREFERENCED_PARAMETER(deferredContext);
 
 	AsmVmxSaveState();
-	KeSignalCallDpcSynchronize(systemArgument2);
-	KeSignalCallDpcDone(systemArgument1);
+
+	if (systemArgument2)
+		KeSignalCallDpcSynchronize(systemArgument2);
+
+	if (systemArgument1)
+		KeSignalCallDpcDone(systemArgument1);
 }
 
 /*
@@ -88,8 +92,11 @@ void TerminateGuest(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVO
 	if (!VmxTerminate())
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "There was an error terminating vmx");
 
-	KeSignalCallDpcSynchronize(systemArgument2);
-	KeSignalCallDpcDone(systemArgument1);
+	if (systemArgument2)
+		KeSignalCallDpcSynchronize(systemArgument2);
+
+	if (systemArgument1)
+		KeSignalCallDpcDone(systemArgument1);
 }
 
 /*
@@ -112,6 +119,14 @@ bool VmxInitializer() {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "VMX is not supported in this machine");
 		return false;
 	}
+
+	if (!VmxHelper::IsXstateSaveAreaSupported()) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "XSTATE preservation requirements are not supported by this build");
+		return false;
+	}
+
+	VmxHelper::InitializeVpidSupport();
+
 	ULONG processorCount = KeQueryActiveProcessorCount(0);
 	GuestState = AllocateVirtualMemory<VmState*>(sizeof(VmState) * processorCount, false);
 
@@ -125,7 +140,7 @@ bool VmxInitializer() {
 			GuestState[processorIndex].EptInstance = new Ept();
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER) {
-			NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to create EPT instance for processor 0x%lx: 0x%llx", processorIndex, GetExceptionCode());
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to create EPT instance for processor 0x%lx: 0x%08X", processorIndex, GetExceptionCode());
 			initialized = false;
 			break;
 		}
@@ -268,6 +283,8 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 
 	__vmx_vmwrite(PAGE_FAULT_ERROR_CODE_MASK, 0);
 	__vmx_vmwrite(PAGE_FAULT_ERROR_CODE_MATCH, 0);
+	__vmx_vmwrite(EXCEPTION_BITMAP, 0);
+	__vmx_vmwrite(CR3_TARGET_COUNT, 0);
 
 	__vmx_vmwrite(VM_EXIT_MSR_STORE_COUNT, 0);
 	__vmx_vmwrite(VM_EXIT_MSR_LOAD_COUNT, 0);
@@ -297,10 +314,17 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	__vmx_vmwrite(CPU_BASED_VM_EXEC_CONTROL, cpuBasedVmExecControls);
 	NovaHypervisorLog(TRACE_FLAG_DEBUG, "CPU Based VM Exec Controls (Based on MSR_IA32_VMX_PROCBASED_CTLS) : 0x%x", cpuBasedVmExecControls);
 
+	ULONG requestedSecondaryControls = CPU_BASED_CTL2_RDTSCP |
+		CPU_BASED_CTL2_ENABLE_EPT |
+		CPU_BASED_CTL2_ENABLE_INVPCID |
+		CPU_BASED_CTL2_ENABLE_XSAVE_XRSTORS |
+		CPU_BASED_CTL2_ENABLE_USER_WAIT_AND_PAUSE;
+
+	if (VpidSupported)
+		requestedSecondaryControls |= CPU_BASED_CTL2_ENABLE_VPID;
+
 	ULONG secondaryProcBasedVmExecControls = VmxHelper::AdjustControls(
-		CPU_BASED_CTL2_RDTSCP | CPU_BASED_CTL2_ENABLE_EPT | 
-		CPU_BASED_CTL2_ENABLE_INVPCID | CPU_BASED_CTL2_ENABLE_XSAVE_XRSTORS | CPU_BASED_CTL2_ENABLE_VPID |
-		CPU_BASED_CTL2_ENABLE_USER_WAIT_AND_PAUSE,
+		requestedSecondaryControls,
 		MSR_IA32_VMX_PROCBASED_CTLS2);
 
 	__vmx_vmwrite(SECONDARY_VM_EXEC_CONTROL, secondaryProcBasedVmExecControls);
@@ -309,10 +333,26 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	__vmx_vmwrite(PIN_BASED_VM_EXEC_CONTROL, VmxHelper::AdjustControls(0,
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_PINBASED_CTLS : MSR_IA32_VMX_PINBASED_CTLS));
 
-	__vmx_vmwrite(VM_EXIT_CONTROLS, VmxHelper::AdjustControls(VM_EXIT_IA32E_MODE,
+	const ULONG vmExitControls =
+		VM_EXIT_IA32E_MODE |
+		VM_EXIT_SAVE_GUEST_PAT |
+		VM_EXIT_LOAD_HOST_PAT |
+		VM_EXIT_SAVE_GUEST_EFER |
+		VM_EXIT_LOAD_HOST_EFER;
+	const ULONG vmEntryControls =
+		VM_ENTRY_IA32E_MODE |
+		VM_ENTRY_LOAD_GUEST_PAT |
+		VM_ENTRY_LOAD_GUEST_EFER;
+
+	__vmx_vmwrite(GUEST_IA32_PAT, __readmsr(MSR_IA32_PAT));
+	__vmx_vmwrite(GUEST_IA32_EFER, __readmsr(MSR_IA32_EFER));
+	__vmx_vmwrite(HOST_IA32_PAT, __readmsr(MSR_IA32_PAT));
+	__vmx_vmwrite(HOST_IA32_EFER, __readmsr(MSR_IA32_EFER));
+
+	__vmx_vmwrite(VM_EXIT_CONTROLS, VmxHelper::AdjustControls(vmExitControls,
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_EXIT_CTLS : MSR_IA32_VMX_EXIT_CTLS));
 
-	__vmx_vmwrite(VM_ENTRY_CONTROLS, VmxHelper::AdjustControls(VM_ENTRY_IA32E_MODE,
+	__vmx_vmwrite(VM_ENTRY_CONTROLS, VmxHelper::AdjustControls(vmEntryControls,
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_ENTRY_CTLS : MSR_IA32_VMX_ENTRY_CTLS));
 
 	__vmx_vmwrite(CR0_GUEST_HOST_MASK, 0);
@@ -329,7 +369,7 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 
 	__vmx_vmwrite(HOST_CR0, __readcr0());
 	__vmx_vmwrite(HOST_CR4, __readcr4());
-	__vmx_vmwrite(HOST_CR3, VmxHelper::FindSystemDirectoryTableBase());
+	__vmx_vmwrite(HOST_CR3, HostDirectoryTableBase);
 
 	__vmx_vmwrite(GUEST_GDTR_BASE, AsmGetGdtBase());
 	__vmx_vmwrite(GUEST_IDTR_BASE, AsmGetIdtBase());
@@ -337,6 +377,10 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	__vmx_vmwrite(GUEST_IDTR_LIMIT, AsmGetIdtLimit());
 
 	__vmx_vmwrite(GUEST_RFLAGS, AsmGetRflags());
+	__vmx_vmwrite(GUEST_INTERRUPTIBILITY_INFO, 0);
+	__vmx_vmwrite(GUEST_ACTIVITY_STATE, 0);
+	__vmx_vmwrite(GUEST_PENDING_DBG_EXCEPTIONS, 0);
+	__vmx_vmwrite(GUEST_SM_BASE, 0);
 
 	__vmx_vmwrite(GUEST_SYSENTER_CS, __readmsr(MSR_IA32_SYSENTER_CS));
 	__vmx_vmwrite(GUEST_SYSENTER_EIP, __readmsr(MSR_IA32_SYSENTER_EIP));
@@ -358,7 +402,9 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	__vmx_vmwrite(MSR_BITMAP, state->MsrBitmapPhysical);
 
 	__vmx_vmwrite(EPT_POINTER, state->EptInstance->GetEptPointerFlags());
-	__vmx_vmwrite(VIRTUAL_PROCESSOR_ID, VPID_TAG);
+
+	if (VpidSupported)
+		__vmx_vmwrite(VIRTUAL_PROCESSOR_ID, VmxHelper::GetVpidTagForProcessor(KeGetCurrentProcessorNumber()));
 
 	__vmx_vmwrite(GUEST_RSP, reinterpret_cast<SIZE_T>(guestStack));
 	__vmx_vmwrite(GUEST_RIP, reinterpret_cast<SIZE_T>(AsmVmxRestoreState));
@@ -457,8 +503,10 @@ bool AllocateVmStructures(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_op
 	}
 	GuestState[currentProcessorId].MsrBitmapPhysical = GetPhysicalAddress(GuestState[currentProcessorId].MsrBitmap);
 
-	KeSignalCallDpcSynchronize(systemArgument2);
-	KeSignalCallDpcDone(systemArgument1);
+	if (systemArgument2)
+		KeSignalCallDpcSynchronize(systemArgument2);
+	if (systemArgument1)
+		KeSignalCallDpcDone(systemArgument1);
 	return true;
 }
 
@@ -607,8 +655,12 @@ void UnhookAllPagesDpc(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ 
 	UNREFERENCED_PARAMETER(deferredContext);
 
 	AsmVmxVmcall(VMCALL_UNHOOK_ALL_PAGES, NULL, NULL, NULL);
-	KeSignalCallDpcSynchronize(systemArgument2);
-	KeSignalCallDpcDone(systemArgument1);
+
+	if (systemArgument2)
+		KeSignalCallDpcSynchronize(systemArgument2);
+
+	if (systemArgument1)
+		KeSignalCallDpcDone(systemArgument1);
 }
 
 /*
@@ -629,6 +681,10 @@ void UnhookSinglePage(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ P
 
 	if (deferredContext)
 		AsmVmxVmcall(VMCALL_UNHOOK_SINGLE_PAGE, reinterpret_cast<UINT64>(deferredContext), NULL, NULL);
-	KeSignalCallDpcSynchronize(systemArgument2);
-	KeSignalCallDpcDone(systemArgument1);
+
+	if (systemArgument2)
+		KeSignalCallDpcSynchronize(systemArgument2);
+
+	if (systemArgument1)
+		KeSignalCallDpcDone(systemArgument1);
 }

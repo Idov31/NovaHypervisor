@@ -3,20 +3,15 @@
 #include "pch.h"
 #include "HypervisorDefinitions.h"
 #include "VmxHelper.h"
-#include "WppDefinitions.h"
-#include "RegistersHandler.tmh"
+#include "ComLogger.h"
 
 constexpr int HYPERVISOR_INTERFACE = 'AVON';
 
-// Hyper-V synthetic MSR range check
-inline bool IsHyperVSyntheticMsr(_In_ ULONG64 msr) {
-	return msr >= 0x40000000 && msr <= 0x40000105;
-}
-
 namespace RegistersHandler {
+	bool IsHyperVSyntheticMsr(_In_ ULONG64 msr);
 	bool IsValidMsr(_In_ ULONG64 rcx);
-	void HandleCRAccess(_In_ PGUEST_REGS guestRegisters);
-	void HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters);
-	void HandleMSRWrite(_In_ PGUEST_REGS guestRegisters);
-	void HandleCpuid(_Inout_ PGUEST_REGS guestRegisters);
+	bool HandleCRAccess(_In_ PGUEST_REGS guestRegisters);
+	bool HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters);
+	bool HandleMSRWrite(_In_ PGUEST_REGS guestRegisters);
+	bool HandleCpuid(_Inout_ PGUEST_REGS guestRegisters);
 };

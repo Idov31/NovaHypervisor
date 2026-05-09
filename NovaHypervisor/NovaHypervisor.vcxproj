@@ -94,8 +94,6 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <WppEnabled>true</WppEnabled>
-      <WppTraceFunction>NovaHypervisorLog(LEVEL,MSG,...)</WppTraceFunction>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -113,8 +111,6 @@
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <Optimization>Disabled</Optimization>
       <FavorSizeOrSpeed>Neither</FavorSizeOrSpeed>
-      <WppEnabled>true</WppEnabled>
-      <WppTraceFunction>NovaHypervisorLog(LEVEL,MSG,...)</WppTraceFunction>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -134,6 +130,7 @@
     </MASM>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="ComLogger.cpp" />
     <ClCompile Include="DeviceControl.cpp" />
     <ClCompile Include="EventInjection.cpp" />
     <ClCompile Include="NovaHypervisor.cpp" />
@@ -152,6 +149,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AutoLock.hpp" />
+    <ClInclude Include="ComLogger.h" />
     <ClInclude Include="DeviceControl.h" />
     <ClInclude Include="EventInjection.h" />
     <ClInclude Include="Ept.h" />
@@ -170,7 +168,6 @@
     <ClInclude Include="Vmx.h" />
     <ClInclude Include="VmxHelper.h" />
     <ClInclude Include="WindowsDefinitions.h" />
-    <ClInclude Include="WppDefinitions.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Spinlock.h" />

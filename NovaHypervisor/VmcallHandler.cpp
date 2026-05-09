@@ -60,7 +60,7 @@ NTSTATUS VmcallHandler(_In_ UINT64 vmcallNumber, _In_opt_ UINT64 optionalParam1,
 			break;
 		}
 		default: {
-			NovaHypervisorLog(TRACE_FLAG_WARNING, "Unsupported vmcall: 0x%llx\n", vmcallNumber);
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Unsupported vmcall: 0x%llx\n", vmcallNumber);
 			status = STATUS_INVALID_PARAMETER;
 			break;
 		}
@@ -77,31 +77,56 @@ NTSTATUS VmcallHandler(_In_ UINT64 vmcallNumber, _In_opt_ UINT64 optionalParam1,
 * @registers   [_Inout_ PGUEST_REGS] -- VM's registers.
 *
 * Returns:
-* @status	   [NTSTATUS]			 -- The function returns the status of the operation.
+* @status	   [bool]				 -- True if the hypercall was forwarded.
 */
-NTSTATUS HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers) {
+bool HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers, _In_ UINT64 guestFxState) {
 	if (!eptInstance || !registers)
-		return STATUS_INVALID_PARAMETER;
+		return false;
 	HYPERCALL_INPUT_VALUE hypercall = { 0 };
 	hypercall.Flags = registers->rcx;
+	const bool flushVirtualAddressSpace =
+		hypercall.Fields.CallCode == HvSwitchVirtualAddressSpace ||
+		hypercall.Fields.CallCode == HvFlushVirtualAddressSpace ||
+		hypercall.Fields.CallCode == HvFlushVirtualAddressList ||
+		hypercall.Fields.CallCode == HvCallFlushVirtualAddressSpaceEx ||
+		hypercall.Fields.CallCode == HvCallFlushVirtualAddressListEx;
+	const bool flushGuestPhysicalAddressSpace =
+		hypercall.Fields.CallCode == HvCallFlushGuestPhysicalAddressSpace ||
+		hypercall.Fields.CallCode == HvCallFlushGuestPhysicalAddressList;
+	const bool requiresLocalTranslationFlush =
+		flushVirtualAddressSpace ||
+		flushGuestPhysicalAddressSpace;
+	const UINT64 inputGpa = registers->rdx;
+	const UINT64 outputGpa = registers->r8;
 
-	switch (hypercall.Fields.CallCode)
-	{
-		case HvSwitchVirtualAddressSpace:
-		case HvFlushVirtualAddressSpace:
-		case HvFlushVirtualAddressList:
-		case HvCallFlushVirtualAddressSpaceEx:
-		case HvCallFlushVirtualAddressListEx:
-			VmxHelper::InvalidateVpid();
-			break;
+	AsmHypervVmcall(reinterpret_cast<UINT64>(registers), guestFxState);
 
-	case HvCallFlushGuestPhysicalAddressSpace:
-	case HvCallFlushGuestPhysicalAddressList:
+	if (requiresLocalTranslationFlush) {
 		VmxHelper::InvalidateEpt(eptInstance->GetEptPointerFlags());
-		break;
+		VmxHelper::InvalidateVpid();
+
+		NovaHypervisorLog(TRACE_FLAG_DEBUG,
+			"Forwarded Hyper-V TLB hypercall code=0x%x fast=%u repCount=%u repStart=%u inputGpa=0x%llx outputGpa=0x%llx status=0x%llx localFlush=INVEPT_SINGLE_CONTEXT%s",
+			static_cast<ULONG>(hypercall.Fields.CallCode),
+			static_cast<ULONG>(hypercall.Fields.Fast),
+			static_cast<ULONG>(hypercall.Fields.RepCount),
+			static_cast<ULONG>(hypercall.Fields.RepStartIndex),
+			inputGpa,
+			outputGpa,
+			registers->rax,
+			VpidSupported ? "+INVVPID" : "");
 	}
-	UINT64 guestRsp = registers->rsp;
-	AsmHypervVmcall(reinterpret_cast<UINT64>(registers));
-	registers->rsp = guestRsp;
-	return STATUS_SUCCESS;
+	/*else {
+		NovaHypervisorLog(TRACE_FLAG_DEBUG,
+			"Forwarded Hyper-V hypercall code=0x%x fast=%u repCount=%u repStart=%u inputGpa=0x%llx outputGpa=0x%llx status=0x%llx",
+			static_cast<ULONG>(hypercall.Fields.CallCode),
+			static_cast<ULONG>(hypercall.Fields.Fast),
+			static_cast<ULONG>(hypercall.Fields.RepCount),
+			static_cast<ULONG>(hypercall.Fields.RepStartIndex),
+			inputGpa,
+			outputGpa,
+			registers->rax);
+	}*/
+
+	return true;
 }

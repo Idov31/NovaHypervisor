@@ -54,7 +54,8 @@ PoolManager::~PoolManager() {
 			allocation = CONTAINING_RECORD(entry, POOL_ALLOCATION, Entry);
 			RemoveEntryList(entry);
 
-			// Since allocation->Address is already freed at TerminateVmx we don't need to free it again.
+			if (allocation->Address)
+				FreeVirtualMemory(allocation->Address);
 			FreeVirtualMemory(allocation);
 			entry = nextEntry;
 		}
@@ -97,8 +98,9 @@ bool PoolManager::AllocateInternal(_In_ ALLOCATION_TYPE type, _In_ bool isInit) 
 		FreeVirtualMemory(allocation);
 		return false;
 	}
+	UNREFERENCED_PARAMETER(isInit);
 	allocation->Type = type;
-	allocation->IsUsed = !isInit;
+	allocation->IsUsed = false;
 
 	InitializeListHead(&allocation->Entry);
 	InsertTailList(head, &allocation->Entry);
@@ -109,13 +111,16 @@ _IRQL_requires_max_(APC_LEVEL)
 void PoolManager::FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
 	PPOOL_ALLOCATION allocation = nullptr;
 	PLIST_ENTRY head = nullptr;
+	SIZE_T allocationSize = 0;
 
 	switch (type) {
 	case SPLIT_2MB_PAGING_TO_4KB_PAGE:
 		head = &pagingAllocations.Head;
+		allocationSize = sizeof(VMM_EPT_DYNAMIC_SPLIT);
 		break;
 	case EPT_HOOK_PAGE:
 		head = &eptHookAllocations.Head;
+		allocationSize = sizeof(EPT_HOOKED_PAGE_DETAIL);
 		break;
 	default:
 		return;
@@ -128,7 +133,7 @@ void PoolManager::FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
 		allocation = CONTAINING_RECORD(entry, POOL_ALLOCATION, Entry);
 
 		if (allocation->Address == address) {
-			FreeVirtualMemory(allocation->Address);
+			RtlSecureZeroMemory(allocation->Address, allocationSize);
 			allocation->IsUsed = false;
 			break;
 		}
@@ -149,21 +154,21 @@ void PoolManager::FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
 PVOID PoolManager::FindFreeSlot(_In_ ALLOCATION_TYPE type) {
 	PPOOL_ALLOCATION allocation = nullptr;
 	PLIST_ENTRY head = nullptr;
-	Spinlock lock;
+	Spinlock* lock = nullptr;
 
 	switch (type) {
 	case SPLIT_2MB_PAGING_TO_4KB_PAGE:
 		head = &pagingAllocations.Head;
-		lock = pagingAllocations.Lock;
+		lock = &pagingAllocations.Lock;
 		break;
 	case EPT_HOOK_PAGE:
 		head = &eptHookAllocations.Head;
-		lock = eptHookAllocations.Lock;
+		lock = &eptHookAllocations.Lock;
 		break;
 	default:
 		return nullptr;
 	}
-	AutoLock<Spinlock> autoLock(lock);
+	AutoLock<Spinlock> autoLock(*lock);
 
 	for (PLIST_ENTRY entry = head->Flink; entry != head; entry = entry->Flink) {
 		allocation = CONTAINING_RECORD(entry, POOL_ALLOCATION, Entry);
@@ -173,7 +178,7 @@ PVOID PoolManager::FindFreeSlot(_In_ ALLOCATION_TYPE type) {
 			return allocation->Address;
 		}
 	}
-	return allocation;
+	return nullptr;
 }
 
 /*
@@ -382,6 +387,9 @@ void PoolManager::StopThreads() {
 		allocationThread = NULL;
 		StopThread(freeThread);
 		freeThread = NULL;
+	}
+	else {
+		runningLock.Unlock();
 	}
 }
 

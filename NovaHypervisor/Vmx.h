@@ -8,8 +8,7 @@
 #include "VmxHelper.h"
 #include "MemoryHelper.hpp"
 #include "VmState.h"
-#include "WppDefinitions.h"
-#include "Vmx.tmh"
+#include "ComLogger.h"
 
 bool VmxInitialize();
 _IRQL_requires_max_(APC_LEVEL)

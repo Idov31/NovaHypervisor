@@ -3,8 +3,7 @@
 #include "GlobalVariables.h"
 #include "HypervisorDefinitions.h"
 #include "Ept.h"
-#include "WppDefinitions.h"
-#include "DeviceControl.tmh"
+#include "ComLogger.h"
 
 constexpr int IOCTL_PROTECT_ADDRESS_RANGE = CTL_CODE(0x8000, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS);
 constexpr int IOCTL_UNPROTECT_ADDRESS_RANGE = CTL_CODE(0x8000, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS);

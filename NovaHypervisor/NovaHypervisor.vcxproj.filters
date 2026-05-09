@@ -22,6 +22,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="ComLogger.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="NovaHypervisor.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -60,6 +63,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ComLogger.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="Ept.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -109,9 +115,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="DeviceControl.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="WppDefinitions.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="RegistersHandler.h">

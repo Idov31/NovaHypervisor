@@ -18,7 +18,6 @@ typedef struct _VMX_VMXOFF_STATE
 class VmState {
 public:
 	bool IsOnVmxRoot;
-	bool IncrementRip;
 	bool IsLaunched;
 	UINT64 VmxonRegion;
 	UINT64 VmxonRegionPhysical;
