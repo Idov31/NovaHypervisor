@@ -376,7 +376,10 @@ void VmxHelper::RestoreRegisters() {
 
 		 if (_wcsnicmp(loadedModulesEntry->BaseDllName.Buffer, KERNEL_NAME, KERNEL_NAME_LEN) == 0) {
 			 KernelBaseInfo.KernelBaseAddress = reinterpret_cast<UINT64>(loadedModulesEntry->DllBase);
-			 KernelBaseInfo.KernelSize = loadedModulesEntry->SizeOfImageNotRounded;
+			 KernelBaseInfo.KernelSize = loadedModulesEntry->SizeOfImage;
+			 NovaHypervisorLog(TRACE_FLAG_INFO, "Kernel image range: 0x%llx - 0x%llx",
+				 KernelBaseInfo.KernelBaseAddress,
+				 KernelBaseInfo.KernelBaseAddress + KernelBaseInfo.KernelSize);
 			 status = STATUS_SUCCESS;
 			 break;
 		 }
