@@ -50,6 +50,30 @@ namespace EventHandler {
 		return true;
 	}
 
+	bool InjectEventFromVmExitInterruption(_In_ VMEXIT_INTERRUPT_INFO interruptExit) {
+		if (!interruptExit.Valid)
+			return false;
+
+		__vmx_vmwrite(VM_ENTRY_INTR_INFO_FIELD, interruptExit.Flags & VM_ENTRY_EVENT_MASK);
+
+		if (interruptExit.ErrorCodeValid) {
+			SIZE_T errorCode = 0;
+			__vmx_vmread(VM_EXIT_INTR_ERROR_CODE, &errorCode);
+			__vmx_vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE, errorCode);
+		}
+		else {
+			__vmx_vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE, 0);
+		}
+
+		const INTERRUPT_TYPE interruptionType =
+			static_cast<INTERRUPT_TYPE>(interruptExit.InterruptionType);
+		if (IsSoftwareEvent(interruptionType))
+			SetupInstructionLength();
+		else
+			__vmx_vmwrite(VM_ENTRY_INSTRUCTION_LEN, 0);
+		return true;
+	}
+
 	void InjectInterruption(_In_ INTERRUPT_TYPE interruptionType, _In_ EXCEPTION_VECTORS vector, _In_ bool deliverErrorCode,
 		_In_ ULONG32 errorCode) {
 
