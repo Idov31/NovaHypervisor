@@ -121,27 +121,16 @@ AsmHypervVmcall PROC
     movdqu xmmword ptr [rax+0e0h], xmm4
     movdqu xmmword ptr [rax+0f0h], xmm5
 
-    ; Copy the guest-visible post-hypercall state back to the saved VM-exit frame.
-    ; Hyper-V guarantees untouched registers remain unchanged, so copying the full
-    ; GPR set preserves rep hypercall RCX, fast-output RDX/R8, and special cases
-    ; such as HvCallSetVpRegisters without relying on per-call decoding here.
+    ; Copy only the TLFS-documented volatile/output registers back to the
+    ; guest-visible frame: RAX result, RCX rep index, and RDX/R8 fast output.
+    ; Other guest GPRs remain exactly as they were at VM-exit.
+    mov r10, qword ptr [rsp+10h]
     mov rax, qword ptr [rsp+08h]
-    mov qword ptr [rcx+0h], rax
+    mov qword ptr [r10+0h], rax
     mov rax, qword ptr [rsp]
-    mov qword ptr [rcx+08h], rax
-    mov qword ptr [rcx+10h], rdx
-    mov qword ptr [rcx+18h], rbx
-    mov qword ptr [rcx+28h], rbp
-    mov qword ptr [rcx+30h], rsi
-    mov qword ptr [rcx+38h], rdi
-    mov qword ptr [rcx+40h], r8
-    mov qword ptr [rcx+48h], r9
-    mov qword ptr [rcx+50h], r10
-    mov qword ptr [rcx+58h], r11
-    mov qword ptr [rcx+60h], r12
-    mov qword ptr [rcx+68h], r13
-    mov qword ptr [rcx+70h], r14
-    mov qword ptr [rcx+78h], r15
+    mov qword ptr [r10+08h], rax
+    mov qword ptr [r10+10h], rdx
+    mov qword ptr [r10+40h], r8
 
     add rsp, 10h
     pop rcx

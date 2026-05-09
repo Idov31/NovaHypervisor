@@ -44,7 +44,7 @@ void VmxHelper::DisableVmxOperation() {
 * Returns:
 * @supported [bool] -- True if VMX is supported, else false.
 */
- bool VmxHelper::IsVmxSupported() {
+bool VmxHelper::IsVmxSupported() {
 	IA32_FEATURE_CONTROL_MSR control = { 0 };
 	CPUID cpuidResult = { 0 };
 
@@ -202,6 +202,34 @@ ULONG VmxHelper::AdjustControls(_In_ ULONG ctl, _In_ ULONG msr) {
 	return ctl;
 }
 
+bool VmxHelper::IsXstateSaveAreaSupported() {
+	if (!(__readcr4() & CR4_OSXSAVE)) {
+		NovaHypervisorLog(TRACE_FLAG_INFO, "CR4.OSXSAVE is not enabled; VM-exit will use FXSAVE/FXRSTOR.");
+		return true;
+	}
+
+	int cpuInfo[4] = { 0 };
+	__cpuidex(cpuInfo, static_cast<int>(CPUID_EXTENDED_STATE_ENUMERATION), 0);
+	const ULONG requiredSize = static_cast<ULONG>(cpuInfo[1]);
+	const ULONG64 xcr0 = _xgetbv(0);
+
+	if (requiredSize == 0 || requiredSize > MAX_XSAVE_AREA_SIZE) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR,
+			"Unsupported XSAVE area size for VM-exit preservation. XCR0=0x%llx required=0x%x max=0x%llx",
+			xcr0,
+			requiredSize,
+			MAX_XSAVE_AREA_SIZE);
+		return false;
+	}
+
+	NovaHypervisorLog(TRACE_FLAG_INFO,
+		"VM-exit will use XSAVE/XRSTOR. XCR0=0x%llx requiredSize=0x%x reservedSize=0x%llx",
+		xcr0,
+		requiredSize,
+		MAX_XSAVE_AREA_SIZE);
+	return true;
+}
+
 void VmxHelper::InitializeVpidSupport() {
 	MSR secondaryControls = { 0 };
 	IA32_VMX_EPT_VPID_CAP_REGISTER eptVpidCapabilities = { 0 };
@@ -216,6 +244,7 @@ void VmxHelper::InitializeVpidSupport() {
 		eptVpidCapabilities.InvvpidAllContexts;
 
 	if (VpidSupported) {
+		VpidSupported = false; // TODO: For debugging purposes.
 		NovaHypervisorLog(TRACE_FLAG_INFO, "VPID is supported by the exposed VMX capabilities and will be enabled.");
 		return;
 	}

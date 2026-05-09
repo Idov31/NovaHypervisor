@@ -13,6 +13,7 @@ namespace VmxHelper {
 	void EnableVmxOperation();
 	void DisableVmxOperation();
 	bool IsVmxSupported();
+	bool IsXstateSaveAreaSupported();
 	bool ClearVmcsState(_Inout_ VmState* state);
 	bool LoadVmcs(_Inout_ VmState* state);
 	void ResumeToNextInstruction();

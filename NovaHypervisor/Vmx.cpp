@@ -119,6 +119,12 @@ bool VmxInitializer() {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "VMX is not supported in this machine");
 		return false;
 	}
+
+	if (!VmxHelper::IsXstateSaveAreaSupported()) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "XSTATE preservation requirements are not supported by this build");
+		return false;
+	}
+
 	VmxHelper::InitializeVpidSupport();
 
 	ULONG processorCount = KeQueryActiveProcessorCount(0);
