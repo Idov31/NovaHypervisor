@@ -494,8 +494,7 @@ bool Ept::HandleHookedPage(_Inout_ EPT_HOOKED_PAGE_DETAIL* hookedEntryDetails,
 	bool operationAllowed = false;
 	bool handled = false;
 	PEPT_PML1_ENTRY pml1Entry = hookedEntryDetails->EntryAddress;
-	bool fromKernelImage = guestRip >= KernelBaseInfo.KernelBaseAddress &&
-		guestRip < (KernelBaseInfo.KernelBaseAddress + KernelBaseInfo.KernelSize);
+	bool fromKernelImage = IsAccessFromKernelImage(guestRip);
 	ULONG32 pageFaultErrorCode = 1;
 
 	*restoreHookAfterInstruction = false;
@@ -606,6 +605,19 @@ void Ept::HandleMisconfiguration(_In_ UINT64 guestAddress) {
 void Ept::HandleMonitorTrapFlag(_Inout_ PEPT_HOOKED_PAGE_DETAIL hookedEntry) {
 	SetPML1AndInvalidateTLB(hookedEntry->EntryAddress, hookedEntry->ChangedEntry, SINGLE_CONTEXT);
 	NovaHypervisorLog(TRACE_FLAG_INFO, "Restored hooked page 0x%llx", hookedEntry->VirtualAddress);
+}
+
+bool Ept::IsAccessFromKernelImage(_In_ UINT64 guestRip) const {
+	const UINT64 kernelBase = KernelBaseInfo.KernelBaseAddress;
+	const UINT64 kernelSize = KernelBaseInfo.KernelSize;
+
+	if (!kernelBase || !kernelSize)
+		return false;
+
+	if (kernelSize > 0x10000000 || kernelBase + kernelSize < kernelBase)
+		return false;
+
+	return guestRip >= kernelBase && guestRip < kernelBase + kernelSize;
 }
 
 /*

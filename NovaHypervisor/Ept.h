@@ -38,6 +38,7 @@ private:
 	PVMM_EPT_PAGE_TABLE AllocateAndCreateIdentityPageTable();
 	bool LogicalProcessorInitialize();
 	void SetPML1AndInvalidateTLB(_Inout_ PEPT_PML1_ENTRY pml1Entry, _In_ EPT_PML1_ENTRY pml1Value, INVEPT_TYPE _In_ invalidationType);
+	bool IsAccessFromKernelImage(_In_ UINT64 guestRip) const;
 	bool HandleHookedPage(_Inout_ EPT_HOOKED_PAGE_DETAIL* hookedEntryDetails,
 		_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification,
 		_In_ ULONG64 guestLinearAddress,
