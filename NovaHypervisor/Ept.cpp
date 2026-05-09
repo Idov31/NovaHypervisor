@@ -279,7 +279,7 @@ bool Ept::SplitLargePage(_Inout_ PVOID buffer, _In_ SIZE_T physicalAddress) {
 	pml1Template.MemoryType = pml2Entry->MemoryType;
 	pml1Template.IgnorePat = pml2Entry->IgnorePat;
 	pml1Template.SuppressVe = pml2Entry->SuppressVe;
-
+	
 	__stosq(reinterpret_cast<SIZE_T*>(&newSplit->PML1[0]), pml1Template.Flags, VMM_EPT_PML1E_COUNT);
 
 	// Set the PFNs for identity mapping by converting the 2MB PFN to 4KB + offset to the frame.

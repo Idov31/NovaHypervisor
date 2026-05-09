@@ -9,3 +9,4 @@ inline VmState* GuestState;
 inline PoolManager* poolManager;
 inline KERNEL_BASE_INFO KernelBaseInfo;
 inline UINT64 HostDirectoryTableBase;
+inline bool VpidSupported;

@@ -9,6 +9,7 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	NTSTATUS status = STATUS_SUCCESS;
 	KernelBaseInfo = { 0 };
 	HostDirectoryTableBase = 0;
+	VpidSupported = false;
 
 	// Getting the OS version.
 	RTL_OSVERSIONINFOW osVersion = { sizeof(osVersion) };

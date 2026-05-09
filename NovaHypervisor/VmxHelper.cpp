@@ -194,12 +194,36 @@ void VmxHelper::ResumeToNextInstruction() {
 * Returns:
 * @ctl	[ULONG]		 -- The adjusted control.
 */
- ULONG VmxHelper::AdjustControls(_In_ ULONG ctl, _In_ ULONG msr) {
+ULONG VmxHelper::AdjustControls(_In_ ULONG ctl, _In_ ULONG msr) {
 	MSR msrValue = { 0 };
 	msrValue.Content = __readmsr(msr);
 	ctl &= msrValue.High;
 	ctl |= msrValue.Low;
 	return ctl;
+}
+
+void VmxHelper::InitializeVpidSupport() {
+	MSR secondaryControls = { 0 };
+	IA32_VMX_EPT_VPID_CAP_REGISTER eptVpidCapabilities = { 0 };
+
+	secondaryControls.Content = __readmsr(MSR_IA32_VMX_PROCBASED_CTLS2);
+	eptVpidCapabilities.Flags = __readmsr(MSR_IA32_VMX_EPT_VPID_CAP);
+
+	VpidSupported = (secondaryControls.High & CPU_BASED_CTL2_ENABLE_VPID) &&
+		eptVpidCapabilities.Invvpid &&
+		eptVpidCapabilities.InvvpidIndividualAddress &&
+		eptVpidCapabilities.InvvpidSingleContext &&
+		eptVpidCapabilities.InvvpidAllContexts;
+
+	if (VpidSupported) {
+		NovaHypervisorLog(TRACE_FLAG_INFO, "VPID is supported by the exposed VMX capabilities and will be enabled.");
+		return;
+	}
+	NovaHypervisorLog(TRACE_FLAG_INFO,
+		"VPID is not supported by the exposed VMX capabilities and will remain disabled. "
+		"Secondary allowed-1: 0x%x, EPT/VPID capabilities: 0x%llx",
+		secondaryControls.High,
+		eptVpidCapabilities.Flags);
 }
 
 /*
@@ -214,6 +238,9 @@ void VmxHelper::ResumeToNextInstruction() {
 * There is no return value.
 */
 void VmxHelper::InvalidateVpid(_In_opt_ UINT64 vpid, _In_opt_ UINT64 address) {
+	if (!VpidSupported)
+		return;
+
 	INVVPID_DESCRIPTOR descriptor = { 0 };
 	InvvpidType type = InvvpidAllContext;
 

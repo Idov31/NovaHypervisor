@@ -119,6 +119,8 @@ bool VmxInitializer() {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "VMX is not supported in this machine");
 		return false;
 	}
+	VmxHelper::InitializeVpidSupport();
+
 	ULONG processorCount = KeQueryActiveProcessorCount(0);
 	GuestState = AllocateVirtualMemory<VmState*>(sizeof(VmState) * processorCount, false);
 
@@ -306,11 +308,17 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	__vmx_vmwrite(CPU_BASED_VM_EXEC_CONTROL, cpuBasedVmExecControls);
 	NovaHypervisorLog(TRACE_FLAG_DEBUG, "CPU Based VM Exec Controls (Based on MSR_IA32_VMX_PROCBASED_CTLS) : 0x%x", cpuBasedVmExecControls);
 
+	ULONG requestedSecondaryControls = CPU_BASED_CTL2_RDTSCP |
+		CPU_BASED_CTL2_ENABLE_EPT |
+		CPU_BASED_CTL2_ENABLE_INVPCID |
+		CPU_BASED_CTL2_ENABLE_XSAVE_XRSTORS |
+		CPU_BASED_CTL2_ENABLE_USER_WAIT_AND_PAUSE;
+
+	if (VpidSupported)
+		requestedSecondaryControls |= CPU_BASED_CTL2_ENABLE_VPID;
+
 	ULONG secondaryProcBasedVmExecControls = VmxHelper::AdjustControls(
-		CPU_BASED_CTL2_RDTSCP | CPU_BASED_CTL2_ENABLE_EPT | 
-		//CPU_BASED_CTL2_ENABLE_INVPCID | CPU_BASED_CTL2_ENABLE_XSAVE_XRSTORS | CPU_BASED_CTL2_ENABLE_VPID |
-		CPU_BASED_CTL2_ENABLE_INVPCID | CPU_BASED_CTL2_ENABLE_XSAVE_XRSTORS |
-		CPU_BASED_CTL2_ENABLE_USER_WAIT_AND_PAUSE,
+		requestedSecondaryControls,
 		MSR_IA32_VMX_PROCBASED_CTLS2);
 
 	__vmx_vmwrite(SECONDARY_VM_EXEC_CONTROL, secondaryProcBasedVmExecControls);
@@ -372,7 +380,9 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	__vmx_vmwrite(MSR_BITMAP, state->MsrBitmapPhysical);
 
 	__vmx_vmwrite(EPT_POINTER, state->EptInstance->GetEptPointerFlags());
-	__vmx_vmwrite(VIRTUAL_PROCESSOR_ID, VPID_TAG);
+
+	if (VpidSupported)
+		__vmx_vmwrite(VIRTUAL_PROCESSOR_ID, VPID_TAG);
 
 	__vmx_vmwrite(GUEST_RSP, reinterpret_cast<SIZE_T>(guestStack));
 	__vmx_vmwrite(GUEST_RIP, reinterpret_cast<SIZE_T>(AsmVmxRestoreState));
