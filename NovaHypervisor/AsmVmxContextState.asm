@@ -194,8 +194,7 @@ AsmVmxSaveState PROC
 	call VirtualizeProcessor
 	add rsp, 028h
 
-	; Shouldn't be reached, added for fail safe.
-	int 3
+	; Should continue here to be able to report failure
 	jmp AsmVmxRestoreState
 AsmVmxSaveState ENDP
 
