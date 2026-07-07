@@ -39,11 +39,11 @@ NTSTATUS VmcallHandler(_In_ UINT64 vmcallNumber, _In_opt_ UINT64 optionalParam1,
 			break;
 		}
 		case VMCALL_INVEPT_SINGLE_CONTEXT: {
-			VmxHelper::InvalidateEpt(optionalParam1);
+			status = VmxHelper::InvalidateEpt(optionalParam1);
 			break;
 		}
 		case VMCALL_INVEPT_ALL_CONTEXT: {
-			VmxHelper::InvalidateEpt();
+			status = VmxHelper::InvalidateEpt();
 			break;
 		}
 		case VMCALL_UNHOOK_SINGLE_PAGE: {
@@ -102,11 +102,11 @@ bool HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers, _In_
 	AsmHypervVmcall(reinterpret_cast<UINT64>(registers), guestFxState);
 
 	if (requiresLocalTranslationFlush) {
-		VmxHelper::InvalidateEpt(eptInstance->GetEptPointerFlags());
-		VmxHelper::InvalidateVpid();
+		NTSTATUS eptStatus = VmxHelper::InvalidateEpt(eptInstance->GetEptPointerFlags());
+		NTSTATUS vpidStatus = VmxHelper::InvalidateVpid();
 
 		NovaHypervisorLog(TRACE_FLAG_DEBUG,
-			"Forwarded Hyper-V TLB hypercall code=0x%x fast=%u repCount=%u repStart=%u inputGpa=0x%llx outputGpa=0x%llx status=0x%llx localFlush=INVEPT_SINGLE_CONTEXT%s",
+			"Forwarded Hyper-V TLB hypercall code=0x%x fast=%u repCount=%u repStart=%u inputGpa=0x%llx outputGpa=0x%llx status=0x%llx localFlush=INVEPT_SINGLE_CONTEXT%s localStatus=0x%08X/0x%08X",
 			static_cast<ULONG>(hypercall.Fields.CallCode),
 			static_cast<ULONG>(hypercall.Fields.Fast),
 			static_cast<ULONG>(hypercall.Fields.RepCount),
@@ -114,7 +114,9 @@ bool HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers, _In_
 			inputGpa,
 			outputGpa,
 			registers->rax,
-			VpidSupported ? "+INVVPID" : "");
+			VpidSupported ? "+INVVPID" : "",
+			eptStatus,
+			vpidStatus);
 	}
 	/*else {
 		NovaHypervisorLog(TRACE_FLAG_DEBUG,

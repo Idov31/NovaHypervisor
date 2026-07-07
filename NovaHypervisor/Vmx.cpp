@@ -1,6 +1,78 @@
 #include "pch.h"
 #include "Vmx.h"
 
+typedef struct _PROCESSOR_DPC_STATUS_CONTEXT {
+	NTSTATUS* ProcessorStatuses;
+	ULONG ProcessorCount;
+} PROCESSOR_DPC_STATUS_CONTEXT, * PPROCESSOR_DPC_STATUS_CONTEXT;
+
+static void InitializeProcessorStatuses(_Out_writes_(processorCount) NTSTATUS* processorStatuses, _In_ ULONG processorCount) {
+	for (ULONG i = 0; i < processorCount; i++)
+		processorStatuses[i] = STATUS_UNSUCCESSFUL;
+}
+
+static void SetCurrentProcessorStatus(_In_opt_ PVOID context, _In_ NTSTATUS status) {
+	PPROCESSOR_DPC_STATUS_CONTEXT statusContext = static_cast<PPROCESSOR_DPC_STATUS_CONTEXT>(context);
+
+	if (!statusContext || !statusContext->ProcessorStatuses)
+		return;
+	ULONG currentProcessor = KeGetCurrentProcessorNumber();
+
+	if (currentProcessor < statusContext->ProcessorCount)
+		statusContext->ProcessorStatuses[currentProcessor] = status;
+}
+
+static bool AreProcessorStatusesSuccessful(_In_reads_(processorCount) NTSTATUS* processorStatuses, _In_ ULONG processorCount, _In_ const char* operationName) {
+	bool status = true;
+
+	for (ULONG i = 0; i < processorCount; i++) {
+		if (!NT_SUCCESS(processorStatuses[i])) {
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "%s failed on processor %d: 0x%08X", operationName, i, processorStatuses[i]);
+			status = false;
+		}
+	}
+	return status;
+}
+
+static bool HasAnyProcessorVmxState(_In_ ULONG processorCount) {
+	if (!GuestState)
+		return false;
+
+	for (ULONG i = 0; i < processorCount; i++) {
+		if (GuestState[i].IsLaunched || GuestState[i].IsVmxOn || GuestState[i].VmxonRegion)
+			return true;
+	}
+	return false;
+}
+
+static void FreeProcessorVmResources(_Inout_ VmState* state) {
+	if (!state)
+		return;
+
+	if (state->VmxonRegion != 0) {
+		MmFreeContiguousMemory(reinterpret_cast<PVOID>(state->VmxonRegion));
+		state->VmxonRegion = 0;
+		state->VmxonRegionPhysical = 0;
+	}
+
+	if (state->VmcsRegion != 0) {
+		MmFreeContiguousMemory(reinterpret_cast<PVOID>(state->VmcsRegion));
+		state->VmcsRegion = 0;
+		state->VmcsRegionPhysical = 0;
+	}
+
+	if (state->VmmStack) {
+		FreeVirtualMemory(reinterpret_cast<PVOID>(state->VmmStack));
+		state->VmmStack = 0;
+	}
+
+	if (state->MsrBitmap) {
+		FreeVirtualMemory(reinterpret_cast<PVOID>(state->MsrBitmap));
+		state->MsrBitmap = 0;
+		state->MsrBitmapPhysical = 0;
+	}
+}
+
 /*
 * Description:
 * VmxInitialize is responsible for initializing the VMX.
@@ -14,7 +86,24 @@
 bool VmxInitialize() {
 	if (!VmxInitializer())
 		return false;
-	KeGenericCallDpc(InitializeGuest, 0x0);
+	ULONG processorCount = KeQueryActiveProcessorCount(0);
+	NTSTATUS* launchStatuses = AllocateVirtualMemory<NTSTATUS*>(sizeof(NTSTATUS) * processorCount, false);
+
+	if (!launchStatuses) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to allocate VMX launch status array");
+		TerminateVmx();
+		return false;
+	}
+	InitializeProcessorStatuses(launchStatuses, processorCount);
+	PROCESSOR_DPC_STATUS_CONTEXT launchContext = { launchStatuses, processorCount };
+	KeGenericCallDpc(InitializeGuest, &launchContext);
+	bool launched = AreProcessorStatusesSuccessful(launchStatuses, processorCount, "VM launch");
+	FreeVirtualMemory(launchStatuses);
+
+	if (!launched) {
+		TerminateVmx();
+		return false;
+	}
 
 	if (!NT_SUCCESS(AsmVmxVmcall(VMCALL_TEST, 0x22, 0x333, 0x4444)))
 		return false;
@@ -30,15 +119,16 @@ bool VmxInitialize() {
 * @deferredContext [_In_opt_ PVOID] -- Additional context.
 * @systemArgument1 [_In_opt_ PVOID] -- The system argument 1, used to signal when the DPC is done.
 * @systemArgument2 [_In_opt_ PVOID] -- The system argument 2, used to synchronize.
-* 
+*
 * Returns:
 * There is no return value.
 */
 void InitializeGuest(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVOID systemArgument1, _In_opt_ PVOID systemArgument2) {
 	UNREFERENCED_PARAMETER(dpc);
-	UNREFERENCED_PARAMETER(deferredContext);
 
 	AsmVmxSaveState();
+	SetCurrentProcessorStatus(deferredContext,
+		(GuestState && GuestState[KeGetCurrentProcessorNumber()].IsLaunched) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL);
 
 	if (systemArgument2)
 		KeSignalCallDpcSynchronize(systemArgument2);
@@ -58,10 +148,27 @@ void InitializeGuest(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PV
 * There is no return value.
 */
 void TerminateVmx() {
-	KeGenericCallDpc(TerminateGuest, 0x0);
 	ULONG processorCount = KeQueryActiveProcessorCount(0);
+	bool terminated = true;
 
-	if (GuestState) {
+	if (HasAnyProcessorVmxState(processorCount)) {
+		NTSTATUS* terminationStatuses = AllocateVirtualMemory<NTSTATUS*>(sizeof(NTSTATUS) * processorCount, false);
+
+		if (terminationStatuses) {
+			InitializeProcessorStatuses(terminationStatuses, processorCount);
+			PROCESSOR_DPC_STATUS_CONTEXT terminationContext = { terminationStatuses, processorCount };
+			KeGenericCallDpc(TerminateGuest, &terminationContext);
+			terminated = AreProcessorStatusesSuccessful(terminationStatuses, processorCount, "VMX termination");
+			FreeVirtualMemory(terminationStatuses);
+		}
+		else {
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to allocate VMX termination status array");
+			KeGenericCallDpc(TerminateGuest, 0x0);
+			terminated = !HasAnyProcessorVmxState(processorCount);
+		}
+	}
+
+	if (GuestState && terminated) {
 		for (ULONG i = 0; i < processorCount; i++) {
 			if (GuestState[i].EptInstance) {
 				delete GuestState[i].EptInstance;
@@ -69,6 +176,10 @@ void TerminateVmx() {
 			}
 		}
 		FreeVirtualMemory(GuestState);
+		GuestState = nullptr;
+	}
+	else if (GuestState) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Leaving VMX shared state allocated because one or more processors failed teardown");
 	}
 }
 
@@ -87,10 +198,11 @@ void TerminateVmx() {
 */
 void TerminateGuest(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVOID systemArgument1, _In_opt_ PVOID systemArgument2) {
 	UNREFERENCED_PARAMETER(dpc);
-	UNREFERENCED_PARAMETER(deferredContext);
+	NTSTATUS status = VmxTerminate() ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 
-	if (!VmxTerminate())
+	if (!NT_SUCCESS(status))
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "There was an error terminating vmx");
+	SetCurrentProcessorStatus(deferredContext, status);
 
 	if (systemArgument2)
 		KeSignalCallDpcSynchronize(systemArgument2);
@@ -154,12 +266,36 @@ bool VmxInitializer() {
 			}
 		}
 		FreeVirtualMemory(GuestState);
+		GuestState = nullptr;
 		return false;
 	}
 
+	NTSTATUS* allocationStatuses = AllocateVirtualMemory<NTSTATUS*>(sizeof(NTSTATUS) * processorCount, false);
+
+	if (!allocationStatuses) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to allocate VMX processor status array");
+		for (ULONG i = 0; i < processorCount; i++) {
+			if (GuestState[i].EptInstance) {
+				delete GuestState[i].EptInstance;
+				GuestState[i].EptInstance = nullptr;
+			}
+		}
+		FreeVirtualMemory(GuestState);
+		GuestState = nullptr;
+		return false;
+	}
+	InitializeProcessorStatuses(allocationStatuses, processorCount);
+	PROCESSOR_DPC_STATUS_CONTEXT allocationContext = { allocationStatuses, processorCount };
+
 	// Allocating vmxon, vmcs, vmm stack and msr bitmap for each logical core.
-	KeGenericCallDpc(reinterpret_cast<PKDEFERRED_ROUTINE>(AllocateVmStructures), 0x0);
-	return true;
+	KeGenericCallDpc(reinterpret_cast<PKDEFERRED_ROUTINE>(AllocateVmStructures), &allocationContext);
+	initialized = AreProcessorStatusesSuccessful(allocationStatuses, processorCount, "VMX structure allocation");
+	FreeVirtualMemory(allocationStatuses);
+	if (!initialized) {
+		TerminateVmx();
+		return false;
+	}
+	return initialized;
 }
 
 /*
@@ -174,6 +310,9 @@ bool VmxInitializer() {
 */
 bool VirtualizeProcessor(_In_ PVOID guestStack) {
 	bool success = true;
+	bool vmcsLoaded = false;
+	bool vmxoffExecuted = false;
+	bool launchAttempted = false;
 	ULONG64 errorCode = 0;
 	ULONG processorId = KeGetCurrentProcessorNumber();
 
@@ -186,6 +325,7 @@ bool VirtualizeProcessor(_In_ PVOID guestStack) {
 
 		if (!VmxHelper::ClearVmcsState(&GuestState[processorId])) {
 			NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to clear VMCS state for processor %d", processorId);
+			vmxoffExecuted = true;
 			success = false;
 			break;
 		}
@@ -195,6 +335,7 @@ bool VirtualizeProcessor(_In_ PVOID guestStack) {
 			success = false;
 			break;
 		}
+		vmcsLoaded = true;
 
 		success = SetupVmcs(&GuestState[processorId], guestStack);
 	} while (false);
@@ -202,13 +343,19 @@ bool VirtualizeProcessor(_In_ PVOID guestStack) {
 	if (success) {
 		NovaHypervisorLog(TRACE_FLAG_INFO, "Launching VM on processor %d", processorId);
 		GuestState[processorId].IsLaunched = true;
+		launchAttempted = true;
 		__vmx_vmlaunch();
 	}
 
-	__vmx_off();
-	__vmx_vmread(VM_INSTRUCTION_ERROR, &errorCode);
+	if (vmcsLoaded || launchAttempted)
+		__vmx_vmread(VM_INSTRUCTION_ERROR, &errorCode);
+
+	if (!vmxoffExecuted)
+		__vmx_off();
 	NovaHypervisorLog(TRACE_FLAG_ERROR, "VM launch failed with error code 0x%llx", errorCode);
 	GuestState[processorId].IsLaunched = false;
+	GuestState[processorId].IsVmxOn = false;
+	VmxHelper::DisableVmxOperation();
 	return false;
 }
 
@@ -227,24 +374,33 @@ bool VmxTerminate() {
 	ULONG currentProcessorIndex = KeGetCurrentProcessorNumber();
 
 	NovaHypervisorLog(TRACE_FLAG_INFO, "Terminating VMX for logical core %d", currentProcessorIndex);
-	status = AsmVmxVmcall(VMCALL_VMXOFF, NULL, NULL, NULL);
 
-	if (!NT_SUCCESS(status))
-		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to execute vmcall to turn off vmx");
+	if (!GuestState)
+		return true;
+	VmState* state = &GuestState[currentProcessorIndex];
 
-	if (GuestState) {
-		if (GuestState[currentProcessorIndex].VmxonRegion != 0) {
-			MmFreeContiguousMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].VmxonRegion));
-			GuestState[currentProcessorIndex].VmxonRegion = 0;
+	if (state->IsLaunched) {
+		status = AsmVmxVmcall(VMCALL_VMXOFF, NULL, NULL, NULL);
+
+		if (!NT_SUCCESS(status) || state->IsLaunched) {
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to execute vmcall to turn off vmx");
+			return false;
 		}
-
-		if (GuestState[currentProcessorIndex].VmcsRegion != 0) {
-			MmFreeContiguousMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].VmcsRegion));
-			GuestState[currentProcessorIndex].VmcsRegion = 0;
-		}
-		FreeVirtualMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].VmmStack));
-		FreeVirtualMemory(reinterpret_cast<PVOID>(GuestState[currentProcessorIndex].MsrBitmap));
 	}
+	else if (state->IsVmxOn) {
+		bool vmxoffExecuted = false;
+
+		if (state->VmcsRegionPhysical && !VmxHelper::ClearVmcsState(state))
+			vmxoffExecuted = true;
+
+		if (!vmxoffExecuted)
+			__vmx_off();
+		state->IsVmxOn = false;
+		state->IsLaunched = false;
+		VmxHelper::DisableVmxOperation();
+	}
+
+	FreeProcessorVmResources(state);
 	return NT_SUCCESS(status);
 }
 
@@ -264,54 +420,64 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	IA32_VMX_BASIC_MSR vmxBasicMsr = { 0 };
 	vmxBasicMsr.All = __readmsr(MSR_IA32_VMX_BASIC);
 
-	__vmx_vmwrite(HOST_ES_SELECTOR, AsmGetEs() & 0xF8);
-	__vmx_vmwrite(HOST_CS_SELECTOR, AsmGetCs() & 0xF8);
-	__vmx_vmwrite(HOST_SS_SELECTOR, AsmGetSs() & 0xF8);
-	__vmx_vmwrite(HOST_DS_SELECTOR, AsmGetDs() & 0xF8);
-	__vmx_vmwrite(HOST_FS_SELECTOR, AsmGetFs() & 0xF8);
-	__vmx_vmwrite(HOST_GS_SELECTOR, AsmGetGs() & 0xF8);
-	__vmx_vmwrite(HOST_TR_SELECTOR, AsmGetTr() & 0xF8);
+	if (!state || !guestStack || !state->EptInstance || !state->MsrBitmapPhysical)
+		return false;
+
+#define VMX_WRITE_OR_FAIL(Field, Value) \
+	do { \
+		if (!VmxHelper::WriteVmcsField((Field), static_cast<SIZE_T>(Value))) \
+			return false; \
+	} while (false)
+
+	VMX_WRITE_OR_FAIL(HOST_ES_SELECTOR, AsmGetEs() & 0xF8);
+	VMX_WRITE_OR_FAIL(HOST_CS_SELECTOR, AsmGetCs() & 0xF8);
+	VMX_WRITE_OR_FAIL(HOST_SS_SELECTOR, AsmGetSs() & 0xF8);
+	VMX_WRITE_OR_FAIL(HOST_DS_SELECTOR, AsmGetDs() & 0xF8);
+	VMX_WRITE_OR_FAIL(HOST_FS_SELECTOR, AsmGetFs() & 0xF8);
+	VMX_WRITE_OR_FAIL(HOST_GS_SELECTOR, AsmGetGs() & 0xF8);
+	VMX_WRITE_OR_FAIL(HOST_TR_SELECTOR, AsmGetTr() & 0xF8);
 
 	// Setting the link pointer to the required value for 4KB VMCS. 
-	__vmx_vmwrite(VMCS_LINK_POINTER, ~0ULL);
+	VMX_WRITE_OR_FAIL(VMCS_LINK_POINTER, ~0ULL);
 
-	__vmx_vmwrite(GUEST_IA32_DEBUGCTL, __readmsr(MSR_IA32_DEBUGCTL) & 0xFFFFFFFF);
-	__vmx_vmwrite(GUEST_IA32_DEBUGCTL_HIGH, __readmsr(MSR_IA32_DEBUGCTL) >> 32);
+	VMX_WRITE_OR_FAIL(GUEST_IA32_DEBUGCTL, __readmsr(MSR_IA32_DEBUGCTL) & 0xFFFFFFFF);
+	VMX_WRITE_OR_FAIL(GUEST_IA32_DEBUGCTL_HIGH, __readmsr(MSR_IA32_DEBUGCTL) >> 32);
 
 	/* Time-stamp counter offset */
-	__vmx_vmwrite(TSC_OFFSET, 0);
+	VMX_WRITE_OR_FAIL(TSC_OFFSET, 0);
 
-	__vmx_vmwrite(PAGE_FAULT_ERROR_CODE_MASK, 0);
-	__vmx_vmwrite(PAGE_FAULT_ERROR_CODE_MATCH, 0);
-	__vmx_vmwrite(EXCEPTION_BITMAP, 0);
-	__vmx_vmwrite(CR3_TARGET_COUNT, 0);
+	VMX_WRITE_OR_FAIL(PAGE_FAULT_ERROR_CODE_MASK, 0);
+	VMX_WRITE_OR_FAIL(PAGE_FAULT_ERROR_CODE_MATCH, 0);
+	VMX_WRITE_OR_FAIL(EXCEPTION_BITMAP, 0);
+	VMX_WRITE_OR_FAIL(CR3_TARGET_COUNT, 0);
 
-	__vmx_vmwrite(VM_EXIT_MSR_STORE_COUNT, 0);
-	__vmx_vmwrite(VM_EXIT_MSR_LOAD_COUNT, 0);
+	VMX_WRITE_OR_FAIL(VM_EXIT_MSR_STORE_COUNT, 0);
+	VMX_WRITE_OR_FAIL(VM_EXIT_MSR_LOAD_COUNT, 0);
 
-	__vmx_vmwrite(VM_ENTRY_MSR_LOAD_COUNT, 0);
-	__vmx_vmwrite(VM_ENTRY_INTR_INFO_FIELD, 0);
+	VMX_WRITE_OR_FAIL(VM_ENTRY_MSR_LOAD_COUNT, 0);
+	VMX_WRITE_OR_FAIL(VM_ENTRY_INTR_INFO_FIELD, 0);
 
 	PVOID gdtBase = reinterpret_cast<PVOID>(AsmGetGdtBase());
 
-	VmxHelper::FillGuestSelectorData(gdtBase, ES, AsmGetEs());
-	VmxHelper::FillGuestSelectorData(gdtBase, CS, AsmGetCs());
-	VmxHelper::FillGuestSelectorData(gdtBase, SS, AsmGetSs());
-	VmxHelper::FillGuestSelectorData(gdtBase, DS, AsmGetDs());
-	VmxHelper::FillGuestSelectorData(gdtBase, FS, AsmGetFs());
-	VmxHelper::FillGuestSelectorData(gdtBase, GS, AsmGetGs());
-	VmxHelper::FillGuestSelectorData(gdtBase, LDTR, AsmGetLdtr());
-	VmxHelper::FillGuestSelectorData(gdtBase, TR, AsmGetTr());
+	if (!VmxHelper::FillGuestSelectorData(gdtBase, ES, AsmGetEs()) ||
+		!VmxHelper::FillGuestSelectorData(gdtBase, CS, AsmGetCs()) ||
+		!VmxHelper::FillGuestSelectorData(gdtBase, SS, AsmGetSs()) ||
+		!VmxHelper::FillGuestSelectorData(gdtBase, DS, AsmGetDs()) ||
+		!VmxHelper::FillGuestSelectorData(gdtBase, FS, AsmGetFs()) ||
+		!VmxHelper::FillGuestSelectorData(gdtBase, GS, AsmGetGs()) ||
+		!VmxHelper::FillGuestSelectorData(gdtBase, LDTR, AsmGetLdtr()) ||
+		!VmxHelper::FillGuestSelectorData(gdtBase, TR, AsmGetTr()))
+		return false;
 
-	__vmx_vmwrite(GUEST_FS_BASE, __readmsr(MSR_FS_BASE));
-	__vmx_vmwrite(GUEST_GS_BASE, __readmsr(MSR_GS_BASE));
+	VMX_WRITE_OR_FAIL(GUEST_FS_BASE, __readmsr(MSR_FS_BASE));
+	VMX_WRITE_OR_FAIL(GUEST_GS_BASE, __readmsr(MSR_GS_BASE));
 
 	
 	ULONG cpuBasedVmExecControls = VmxHelper::AdjustControls(
 		CPU_BASED_ACTIVATE_MSR_BITMAP | 
 		CPU_BASED_ACTIVATE_SECONDARY_CONTROLS, 
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_PROCBASED_CTLS : MSR_IA32_VMX_PROCBASED_CTLS);
-	__vmx_vmwrite(CPU_BASED_VM_EXEC_CONTROL, cpuBasedVmExecControls);
+	VMX_WRITE_OR_FAIL(CPU_BASED_VM_EXEC_CONTROL, cpuBasedVmExecControls);
 	NovaHypervisorLog(TRACE_FLAG_DEBUG, "CPU Based VM Exec Controls (Based on MSR_IA32_VMX_PROCBASED_CTLS) : 0x%x", cpuBasedVmExecControls);
 
 	ULONG requestedSecondaryControls = CPU_BASED_CTL2_RDTSCP |
@@ -327,10 +493,10 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 		requestedSecondaryControls,
 		MSR_IA32_VMX_PROCBASED_CTLS2);
 
-	__vmx_vmwrite(SECONDARY_VM_EXEC_CONTROL, secondaryProcBasedVmExecControls);
+	VMX_WRITE_OR_FAIL(SECONDARY_VM_EXEC_CONTROL, secondaryProcBasedVmExecControls);
 	NovaHypervisorLog(TRACE_FLAG_DEBUG, "Secondary CPU Based VM Exec Controls (Based on MSR_IA32_VMX_PROCBASED_CTLS2) : 0x%x", secondaryProcBasedVmExecControls);
 
-	__vmx_vmwrite(PIN_BASED_VM_EXEC_CONTROL, VmxHelper::AdjustControls(0,
+	VMX_WRITE_OR_FAIL(PIN_BASED_VM_EXEC_CONTROL, VmxHelper::AdjustControls(0,
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_PINBASED_CTLS : MSR_IA32_VMX_PINBASED_CTLS));
 
 	const ULONG vmExitControls =
@@ -344,77 +510,80 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 		VM_ENTRY_LOAD_GUEST_PAT |
 		VM_ENTRY_LOAD_GUEST_EFER;
 
-	__vmx_vmwrite(GUEST_IA32_PAT, __readmsr(MSR_IA32_PAT));
-	__vmx_vmwrite(GUEST_IA32_EFER, __readmsr(MSR_IA32_EFER));
-	__vmx_vmwrite(HOST_IA32_PAT, __readmsr(MSR_IA32_PAT));
-	__vmx_vmwrite(HOST_IA32_EFER, __readmsr(MSR_IA32_EFER));
+	VMX_WRITE_OR_FAIL(GUEST_IA32_PAT, __readmsr(MSR_IA32_PAT));
+	VMX_WRITE_OR_FAIL(GUEST_IA32_EFER, __readmsr(MSR_IA32_EFER));
+	VMX_WRITE_OR_FAIL(HOST_IA32_PAT, __readmsr(MSR_IA32_PAT));
+	VMX_WRITE_OR_FAIL(HOST_IA32_EFER, __readmsr(MSR_IA32_EFER));
 
-	__vmx_vmwrite(VM_EXIT_CONTROLS, VmxHelper::AdjustControls(vmExitControls,
+	VMX_WRITE_OR_FAIL(VM_EXIT_CONTROLS, VmxHelper::AdjustControls(vmExitControls,
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_EXIT_CTLS : MSR_IA32_VMX_EXIT_CTLS));
 
-	__vmx_vmwrite(VM_ENTRY_CONTROLS, VmxHelper::AdjustControls(vmEntryControls,
+	VMX_WRITE_OR_FAIL(VM_ENTRY_CONTROLS, VmxHelper::AdjustControls(vmEntryControls,
 		vmxBasicMsr.Fields.VmxCapabilityHint ? MSR_IA32_VMX_TRUE_ENTRY_CTLS : MSR_IA32_VMX_ENTRY_CTLS));
 
-	__vmx_vmwrite(CR0_GUEST_HOST_MASK, 0);
-	__vmx_vmwrite(CR4_GUEST_HOST_MASK, 0);
+	VMX_WRITE_OR_FAIL(CR0_GUEST_HOST_MASK, 0);
+	VMX_WRITE_OR_FAIL(CR4_GUEST_HOST_MASK, 0);
 
-	__vmx_vmwrite(CR0_READ_SHADOW, 0);
-	__vmx_vmwrite(CR4_READ_SHADOW, 0);
+	VMX_WRITE_OR_FAIL(CR0_READ_SHADOW, 0);
+	VMX_WRITE_OR_FAIL(CR4_READ_SHADOW, 0);
 
-	__vmx_vmwrite(GUEST_CR0, __readcr0());
-	__vmx_vmwrite(GUEST_CR3, __readcr3());
-	__vmx_vmwrite(GUEST_CR4, __readcr4());
+	VMX_WRITE_OR_FAIL(GUEST_CR0, __readcr0());
+	VMX_WRITE_OR_FAIL(GUEST_CR3, __readcr3());
+	VMX_WRITE_OR_FAIL(GUEST_CR4, __readcr4());
 
-	__vmx_vmwrite(GUEST_DR7, 0x400);
+	VMX_WRITE_OR_FAIL(GUEST_DR7, 0x400);
 
-	__vmx_vmwrite(HOST_CR0, __readcr0());
-	__vmx_vmwrite(HOST_CR4, __readcr4());
-	__vmx_vmwrite(HOST_CR3, HostDirectoryTableBase);
+	VMX_WRITE_OR_FAIL(HOST_CR0, __readcr0());
+	VMX_WRITE_OR_FAIL(HOST_CR4, __readcr4());
+	VMX_WRITE_OR_FAIL(HOST_CR3, HostDirectoryTableBase);
 
-	__vmx_vmwrite(GUEST_GDTR_BASE, AsmGetGdtBase());
-	__vmx_vmwrite(GUEST_IDTR_BASE, AsmGetIdtBase());
-	__vmx_vmwrite(GUEST_GDTR_LIMIT, AsmGetGdtLimit());
-	__vmx_vmwrite(GUEST_IDTR_LIMIT, AsmGetIdtLimit());
+	VMX_WRITE_OR_FAIL(GUEST_GDTR_BASE, AsmGetGdtBase());
+	VMX_WRITE_OR_FAIL(GUEST_IDTR_BASE, AsmGetIdtBase());
+	VMX_WRITE_OR_FAIL(GUEST_GDTR_LIMIT, AsmGetGdtLimit());
+	VMX_WRITE_OR_FAIL(GUEST_IDTR_LIMIT, AsmGetIdtLimit());
 
-	__vmx_vmwrite(GUEST_RFLAGS, AsmGetRflags());
-	__vmx_vmwrite(GUEST_INTERRUPTIBILITY_INFO, 0);
-	__vmx_vmwrite(GUEST_ACTIVITY_STATE, 0);
-	__vmx_vmwrite(GUEST_PENDING_DBG_EXCEPTIONS, 0);
-	__vmx_vmwrite(GUEST_SM_BASE, 0);
+	VMX_WRITE_OR_FAIL(GUEST_RFLAGS, AsmGetRflags());
+	VMX_WRITE_OR_FAIL(GUEST_INTERRUPTIBILITY_INFO, 0);
+	VMX_WRITE_OR_FAIL(GUEST_ACTIVITY_STATE, 0);
+	VMX_WRITE_OR_FAIL(GUEST_PENDING_DBG_EXCEPTIONS, 0);
+	VMX_WRITE_OR_FAIL(GUEST_SM_BASE, 0);
 
-	__vmx_vmwrite(GUEST_SYSENTER_CS, __readmsr(MSR_IA32_SYSENTER_CS));
-	__vmx_vmwrite(GUEST_SYSENTER_EIP, __readmsr(MSR_IA32_SYSENTER_EIP));
-	__vmx_vmwrite(GUEST_SYSENTER_ESP, __readmsr(MSR_IA32_SYSENTER_ESP));
+	VMX_WRITE_OR_FAIL(GUEST_SYSENTER_CS, __readmsr(MSR_IA32_SYSENTER_CS));
+	VMX_WRITE_OR_FAIL(GUEST_SYSENTER_EIP, __readmsr(MSR_IA32_SYSENTER_EIP));
+	VMX_WRITE_OR_FAIL(GUEST_SYSENTER_ESP, __readmsr(MSR_IA32_SYSENTER_ESP));
 	
-	VmxHelper::GetSegmentDescriptor(&segmentSelector, AsmGetTr(), reinterpret_cast<PVOID>(AsmGetGdtBase()));
-	__vmx_vmwrite(HOST_TR_BASE, segmentSelector.BASE);
+	if (!VmxHelper::GetSegmentDescriptor(&segmentSelector, AsmGetTr(), reinterpret_cast<PVOID>(AsmGetGdtBase())))
+		return false;
+	VMX_WRITE_OR_FAIL(HOST_TR_BASE, segmentSelector.BASE);
 
-	__vmx_vmwrite(HOST_FS_BASE, __readmsr(MSR_FS_BASE));
-	__vmx_vmwrite(HOST_GS_BASE, __readmsr(MSR_GS_BASE));
+	VMX_WRITE_OR_FAIL(HOST_FS_BASE, __readmsr(MSR_FS_BASE));
+	VMX_WRITE_OR_FAIL(HOST_GS_BASE, __readmsr(MSR_GS_BASE));
 
-	__vmx_vmwrite(HOST_GDTR_BASE, AsmGetGdtBase());
-	__vmx_vmwrite(HOST_IDTR_BASE, AsmGetIdtBase());
+	VMX_WRITE_OR_FAIL(HOST_GDTR_BASE, AsmGetGdtBase());
+	VMX_WRITE_OR_FAIL(HOST_IDTR_BASE, AsmGetIdtBase());
 
-	__vmx_vmwrite(HOST_IA32_SYSENTER_CS, __readmsr(MSR_IA32_SYSENTER_CS));
-	__vmx_vmwrite(HOST_IA32_SYSENTER_EIP, __readmsr(MSR_IA32_SYSENTER_EIP));
-	__vmx_vmwrite(HOST_IA32_SYSENTER_ESP, __readmsr(MSR_IA32_SYSENTER_ESP));
+	VMX_WRITE_OR_FAIL(HOST_IA32_SYSENTER_CS, __readmsr(MSR_IA32_SYSENTER_CS));
+	VMX_WRITE_OR_FAIL(HOST_IA32_SYSENTER_EIP, __readmsr(MSR_IA32_SYSENTER_EIP));
+	VMX_WRITE_OR_FAIL(HOST_IA32_SYSENTER_ESP, __readmsr(MSR_IA32_SYSENTER_ESP));
 
-	__vmx_vmwrite(MSR_BITMAP, state->MsrBitmapPhysical);
+	VMX_WRITE_OR_FAIL(MSR_BITMAP, state->MsrBitmapPhysical);
 
-	__vmx_vmwrite(EPT_POINTER, state->EptInstance->GetEptPointerFlags());
+	VMX_WRITE_OR_FAIL(EPT_POINTER, state->EptInstance->GetEptPointerFlags());
 
 	if (VpidSupported)
-		__vmx_vmwrite(VIRTUAL_PROCESSOR_ID, VmxHelper::GetVpidTagForProcessor(KeGetCurrentProcessorNumber()));
+		VMX_WRITE_OR_FAIL(VIRTUAL_PROCESSOR_ID, VmxHelper::GetVpidTagForProcessor(KeGetCurrentProcessorNumber()));
 
-	__vmx_vmwrite(GUEST_RSP, reinterpret_cast<SIZE_T>(guestStack));
-	__vmx_vmwrite(GUEST_RIP, reinterpret_cast<SIZE_T>(AsmVmxRestoreState));
+	VMX_WRITE_OR_FAIL(GUEST_RSP, reinterpret_cast<SIZE_T>(guestStack));
+	VMX_WRITE_OR_FAIL(GUEST_RIP, reinterpret_cast<SIZE_T>(AsmVmxRestoreState));
 
 	UINT64 hostRsp = (state->VmmStack + VMM_STACK_SIZE - 1);
 	hostRsp &= ~0xF;
-	__vmx_vmwrite(HOST_RSP, hostRsp);
-	__vmx_vmwrite(HOST_RIP, reinterpret_cast<SIZE_T>(AsmVmexitHandler));
+	VMX_WRITE_OR_FAIL(HOST_RSP, hostRsp);
+	VMX_WRITE_OR_FAIL(HOST_RIP, reinterpret_cast<SIZE_T>(AsmVmexitHandler));
 	return true;
 }
+
+#undef VMX_WRITE_OR_FAIL
 
 /*
 * Description:
@@ -451,10 +620,15 @@ void VmxVmxoff() {
 	VmxHelper::RestoreRegisters();
 
 	// Clearing VMCS state.
-	VmxHelper::ClearVmcsState(&GuestState[currentProcessorIndex]);
-	__vmx_off();
+	bool vmxoffExecuted = false;
+	if (!VmxHelper::ClearVmcsState(&GuestState[currentProcessorIndex]))
+		vmxoffExecuted = true;
+
+	if (!vmxoffExecuted)
+		__vmx_off();
 
 	GuestState[currentProcessorIndex].IsLaunched = false;
+	GuestState[currentProcessorIndex].IsVmxOn = false;
 	VmxHelper::DisableVmxOperation();
 }
 
@@ -469,45 +643,78 @@ void VmxVmxoff() {
 * @systemArgument2 [_In_opt_ PVOID] -- The system argument 2, used to synchronize.
 *
 * Returns:
-* @status		   [bool]		    -- True if the VMX was enabled and the memory was allocated, else false.
+* There is no return value.
 */
-bool AllocateVmStructures(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVOID systemArgument1, _In_opt_ PVOID systemArgument2) {
+void AllocateVmStructures(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVOID systemArgument1, _In_opt_ PVOID systemArgument2) {
 	UNREFERENCED_PARAMETER(dpc);
-	UNREFERENCED_PARAMETER(deferredContext);
 
 	ULONG currentProcessorId = KeGetCurrentProcessorNumber();
+	NTSTATUS status = STATUS_SUCCESS;
 	NovaHypervisorLog(TRACE_FLAG_INFO, "Allocating VMX regions for logical core %d", currentProcessorId);
-	VmxHelper::EnableVmxOperation();
-	NovaHypervisorLog(TRACE_FLAG_INFO, "VMX operation enabled for logical core %d", currentProcessorId);
 
-	if (!AllocateRegion(VMXON_REGION, &GuestState[currentProcessorId])) {
-		NovaHypervisorLog(TRACE_FLAG_ERROR, "Error in allocating memory for Vmxon region for logical core %d", currentProcessorId);
-		return false;
+	do {
+		if (!GuestState) {
+			status = STATUS_UNSUCCESSFUL;
+			break;
+		}
+		VmState* state = &GuestState[currentProcessorId];
+
+		VmxHelper::EnableVmxOperation();
+		NovaHypervisorLog(TRACE_FLAG_INFO, "VMX operation enabled for logical core %d", currentProcessorId);
+
+		if (!AllocateRegion(VMXON_REGION, state)) {
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "Error in allocating memory for Vmxon region for logical core %d", currentProcessorId);
+			status = STATUS_INSUFFICIENT_RESOURCES;
+			break;
+		}
+		if (!AllocateRegion(VMCS_REGION, state)) {
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "Error in allocating memory for Vmcs region for logical core %d", currentProcessorId);
+			status = STATUS_INSUFFICIENT_RESOURCES;
+			break;
+		}
+
+		state->VmmStack = AllocateVirtualMemory<UINT64>(VMM_STACK_SIZE, false);
+
+		if (!state->VmmStack) {
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to allocate VMM stack for processor %d", currentProcessorId);
+			status = STATUS_INSUFFICIENT_RESOURCES;
+			break;
+		}
+		state->MsrBitmap = AllocateVirtualMemory<UINT64>(PAGE_SIZE, false);
+
+		if (!state->MsrBitmap) {
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to allocate MSR bitmap for processor %d", currentProcessorId);
+			status = STATUS_INSUFFICIENT_RESOURCES;
+			break;
+		}
+		state->MsrBitmapPhysical = GetPhysicalAddress(state->MsrBitmap);
+
+		if (!state->MsrBitmapPhysical)
+			status = STATUS_UNSUCCESSFUL;
+	} while (false);
+
+	if (!NT_SUCCESS(status) && GuestState) {
+		VmState* state = &GuestState[currentProcessorId];
+
+		if (state->IsVmxOn) {
+			bool vmxoffExecuted = false;
+
+			if (state->VmcsRegionPhysical && !VmxHelper::ClearVmcsState(state))
+				vmxoffExecuted = true;
+			if (!vmxoffExecuted)
+				__vmx_off();
+			state->IsVmxOn = false;
+			state->IsLaunched = false;
+		}
+		VmxHelper::DisableVmxOperation();
+		FreeProcessorVmResources(state);
 	}
-	if (!AllocateRegion(VMCS_REGION, &GuestState[currentProcessorId])) {
-		NovaHypervisorLog(TRACE_FLAG_ERROR, "Error in allocating memory for Vmcs region for logical core %d", currentProcessorId);
-		return false;
-	}
 
-	GuestState[currentProcessorId].VmmStack = AllocateVirtualMemory<UINT64>(VMM_STACK_SIZE, false);
-
-	if (!GuestState[currentProcessorId].VmmStack) {
-		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to allocate VMM stack for processor %d", currentProcessorId);
-		return false;
-	}
-	GuestState[currentProcessorId].MsrBitmap = AllocateVirtualMemory<UINT64>(PAGE_SIZE, false);
-
-	if (!GuestState[currentProcessorId].MsrBitmap) {
-		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to allocate MSR bitmap for processor %d", currentProcessorId);
-		return false;
-	}
-	GuestState[currentProcessorId].MsrBitmapPhysical = GetPhysicalAddress(GuestState[currentProcessorId].MsrBitmap);
-
+	SetCurrentProcessorStatus(deferredContext, status);
 	if (systemArgument2)
 		KeSignalCallDpcSynchronize(systemArgument2);
 	if (systemArgument1)
 		KeSignalCallDpcDone(systemArgument1);
-	return true;
 }
 
 /*
@@ -605,6 +812,7 @@ bool AllocateRegion(_In_ RegionType regionType, _Inout_ VmState* state) {
 	else {
 		state->VmxonRegion = (UINT64)region;
 		state->VmxonRegionPhysical = alignedRegionPhysical;
+		state->IsVmxOn = true;
 	}
 	return true;
 }
@@ -655,32 +863,6 @@ void UnhookAllPagesDpc(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ 
 	UNREFERENCED_PARAMETER(deferredContext);
 
 	AsmVmxVmcall(VMCALL_UNHOOK_ALL_PAGES, NULL, NULL, NULL);
-
-	if (systemArgument2)
-		KeSignalCallDpcSynchronize(systemArgument2);
-
-	if (systemArgument1)
-		KeSignalCallDpcDone(systemArgument1);
-}
-
-/*
-* Description:
-* UnhookAllPages is responsible for removing single EPT hook and invalidating the TLB.
-*
-* Parameters:
-* @dpc			   [_In_ KDPC*]		-- The DPC.
-* @deferredContext [_In_opt_ PVOID] -- Additional context (page to unhook).
-* @systemArgument1 [_In_opt_ PVOID] -- The system argument 1, used to signal when the DPC is done.
-* @systemArgument2 [_In_opt_ PVOID] -- The system argument 2, used to synchronize.
-*
-* Returns:
-* There is no return value.
-*/
-void UnhookSinglePage(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVOID systemArgument1, _In_opt_ PVOID systemArgument2) {
-	UNREFERENCED_PARAMETER(dpc);
-
-	if (deferredContext)
-		AsmVmxVmcall(VMCALL_UNHOOK_SINGLE_PAGE, reinterpret_cast<UINT64>(deferredContext), NULL, NULL);
 
 	if (systemArgument2)
 		KeSignalCallDpcSynchronize(systemArgument2);

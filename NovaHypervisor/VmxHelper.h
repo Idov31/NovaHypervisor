@@ -20,11 +20,12 @@ namespace VmxHelper {
 	void ResumeToNextInstruction();
 	bool GetSegmentDescriptor(_Inout_ PSEGMENT_SELECTOR segmentSelector, _In_ USHORT selector, _In_ PVOID gdtBase);
 	bool FillGuestSelectorData(_In_ PVOID gdtBase, _In_ ULONG segmentRegister, _In_ USHORT selector);
+	bool WriteVmcsField(_In_ SIZE_T field, _In_ SIZE_T value);
 	ULONG AdjustControls(_In_ ULONG ctl, _In_ ULONG msr);
 	void InitializeVpidSupport();
 	UINT16 GetVpidTagForProcessor(_In_ ULONG processorIndex);
-	void InvalidateVpid(_In_opt_ UINT64 vpid = 0, _In_opt_ UINT64 address = 0);
-	void InvalidateEpt(_In_opt_ UINT64 context = 0);
+	NTSTATUS InvalidateVpid(_In_opt_ UINT64 vpid = 0, _In_opt_ UINT64 address = 0);
+	NTSTATUS InvalidateEpt(_In_opt_ UINT64 context = 0);
 	NTSTATUS InvalidateEptByVmcall(_In_opt_ UINT64 context = 0);
 	NTSTATUS HookPageByVmcall(_In_opt_ UINT64 context = 0);
 	NTSTATUS UnhookPageByVmcall(_In_opt_ UINT64 context = 0);

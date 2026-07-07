@@ -2,6 +2,12 @@
 #include "VmxHelper.h"
 #include "GlobalVariables.h"
 
+namespace {
+	NTSTATUS VmxInstructionStatusToNtStatus(_In_ UCHAR instructionStatus) {
+		return instructionStatus == 0 ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+	}
+}
+
 /*
 * Description:
 * EnableVmxOperation is responsible for enabling VMX operation.
@@ -73,7 +79,7 @@ bool VmxHelper::IsVmxSupported() {
 * Returns:
 * @status [bool]			 -- True if the VMCS was cleared, else false.
 */
- bool VmxHelper::ClearVmcsState(_Inout_ VmState* state) {
+bool VmxHelper::ClearVmcsState(_Inout_ VmState* state) {
 	int status = __vmx_vmclear(&state->VmcsRegionPhysical);
 
 	if (status) {
@@ -93,7 +99,7 @@ bool VmxHelper::IsVmxSupported() {
 * Returns:
 * @status [bool]			 -- True if the VMCS loaded, else false.
 */
- bool VmxHelper::LoadVmcs(_Inout_ VmState* state) {
+bool VmxHelper::LoadVmcs(_Inout_ VmState* state) {
 	return !__vmx_vmptrld(&state->VmcsRegionPhysical);
 }
 
@@ -131,7 +137,7 @@ void VmxHelper::ResumeToNextInstruction() {
 * Returns:
 * @status		   [bool]					   -- True if the segment descriptor was filled, else false.
 */
- bool VmxHelper::GetSegmentDescriptor(_Inout_ PSEGMENT_SELECTOR segmentSelector, _In_ USHORT selector, _In_ PVOID gdtBase) {
+bool VmxHelper::GetSegmentDescriptor(_Inout_ PSEGMENT_SELECTOR segmentSelector, _In_ USHORT selector, _In_ PVOID gdtBase) {
 	if (!segmentSelector || selector & 4)
 		return false;
 	PSEGMENT_DESCRIPTOR segDesc = reinterpret_cast<PSEGMENT_DESCRIPTOR>(reinterpret_cast<PUCHAR>(gdtBase) + (selector & ~0x7));
@@ -165,7 +171,7 @@ void VmxHelper::ResumeToNextInstruction() {
 * Returns:
 * There is no return value.
 */
- bool VmxHelper::FillGuestSelectorData(_In_ PVOID gdtBase, _In_ ULONG segmentRegister, _In_ USHORT selector) {
+bool VmxHelper::FillGuestSelectorData(_In_ PVOID gdtBase, _In_ ULONG segmentRegister, _In_ USHORT selector) {
 	SEGMENT_SELECTOR segmentSelector = { 0 };
 	ULONG accessRights = 0;
 
@@ -176,10 +182,24 @@ void VmxHelper::ResumeToNextInstruction() {
 
 	if (selector == 0)
 		accessRights |= 0x10000;
-	__vmx_vmwrite(GUEST_ES_SELECTOR + segmentRegister * 2, selector);
-	__vmx_vmwrite(GUEST_ES_LIMIT + segmentRegister * 2, segmentSelector.LIMIT);
-	__vmx_vmwrite(GUEST_ES_AR_BYTES + segmentRegister * 2, accessRights);
-	__vmx_vmwrite(GUEST_ES_BASE + segmentRegister * 2, segmentSelector.BASE);
+	if (!WriteVmcsField(GUEST_ES_SELECTOR + segmentRegister * 2, selector) ||
+		!WriteVmcsField(GUEST_ES_LIMIT + segmentRegister * 2, segmentSelector.LIMIT) ||
+		!WriteVmcsField(GUEST_ES_AR_BYTES + segmentRegister * 2, accessRights) ||
+		!WriteVmcsField(GUEST_ES_BASE + segmentRegister * 2, segmentSelector.BASE))
+		return false;
+	return true;
+}
+
+bool VmxHelper::WriteVmcsField(_In_ SIZE_T field, _In_ SIZE_T value) {
+	int status = __vmx_vmwrite(field, value);
+
+	if (status) {
+		SIZE_T errorCode = 0;
+		__vmx_vmread(VM_INSTRUCTION_ERROR, &errorCode);
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "VMWRITE failed. Field=0x%llx Value=0x%llx Status=%d Error=0x%llx",
+			field, value, status, errorCode);
+		return false;
+	}
 	return true;
 }
 
@@ -332,11 +352,11 @@ UINT16 VmxHelper::GetVpidTagForProcessor(_In_ ULONG processorIndex) {
 * @address [_In_opt_ UINT64] -- The address to invalidate.
 *
 * Returns:
-* There is no return value.
+* @status  [NTSTATUS]		   -- STATUS_SUCCESS if invalidation succeeded or VPID is disabled.
 */
-void VmxHelper::InvalidateVpid(_In_opt_ UINT64 vpid, _In_opt_ UINT64 address) {
+NTSTATUS VmxHelper::InvalidateVpid(_In_opt_ UINT64 vpid, _In_opt_ UINT64 address) {
 	if (!VpidSupported)
-		return;
+		return STATUS_SUCCESS;
 
 	INVVPID_DESCRIPTOR descriptor = { 0 };
 	InvvpidType type = InvvpidAllContext;
@@ -350,7 +370,13 @@ void VmxHelper::InvalidateVpid(_In_opt_ UINT64 vpid, _In_opt_ UINT64 address) {
 			type = InvvpidIndividualAddress;
 		}
 	}
-	AsmInvvpid(type, &descriptor);
+	UCHAR instructionStatus = AsmInvvpid(type, &descriptor);
+	NTSTATUS status = VmxInstructionStatusToNtStatus(instructionStatus);
+
+	if (!NT_SUCCESS(status))
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "INVVPID failed. Type=0x%x VPID=0x%llx Address=0x%llx Status=0x%x",
+			type, vpid, address, instructionStatus);
+	return status;
 }
 
 /*
@@ -361,9 +387,9 @@ void VmxHelper::InvalidateVpid(_In_opt_ UINT64 vpid, _In_opt_ UINT64 address) {
 * @context [_In_opt_ UINT64] -- The context to invalidate.
 *
 * Returns:
-* There is no return value.
+* @status  [NTSTATUS]		   -- STATUS_SUCCESS if invalidation succeeded.
 */
-void VmxHelper::InvalidateEpt(_In_opt_ UINT64 context) {
+NTSTATUS VmxHelper::InvalidateEpt(_In_opt_ UINT64 context) {
 	INVEPT_DESC descriptor = { 0 };
 	ULONG inveptType = ALL_CONTEXTS;
 
@@ -371,7 +397,13 @@ void VmxHelper::InvalidateEpt(_In_opt_ UINT64 context) {
 		descriptor.EptPointer.Flags = context;
 		inveptType = SINGLE_CONTEXT;
 	}
-	AsmInvept(inveptType, &descriptor);
+	UCHAR instructionStatus = AsmInvept(inveptType, &descriptor);
+	NTSTATUS status = VmxInstructionStatusToNtStatus(instructionStatus);
+
+	if (!NT_SUCCESS(status))
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "INVEPT failed. Type=0x%x Context=0x%llx Status=0x%x",
+			inveptType, context, instructionStatus);
+	return status;
 }
 
 /*
@@ -461,47 +493,47 @@ void VmxHelper::RestoreRegisters() {
 	AsmReloadIdtr(reinterpret_cast<PVOID>(idtrBase), idtrLimit);
 }
 
- /*
- * Description:
- * FindKernelBaseAddress is responsible for finding the kernel base address.
- * 
- * Parameters:
- * There are no parameters.
- * 
- * Returns:
- * @status [NTSTATUS] -- STATUS_SUCCESS if the kernel base address was found, else error.
- */
- NTSTATUS VmxHelper::FindKernelBaseAddress() {
-	 PKLDR_DATA_TABLE_ENTRY loadedModulesEntry = NULL;
-	 NTSTATUS status = STATUS_NOT_FOUND;
+/*
+* Description:
+* FindKernelBaseAddress is responsible for finding the kernel base address.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* @status [NTSTATUS] -- STATUS_SUCCESS if the kernel base address was found, else error.
+*/
+NTSTATUS VmxHelper::FindKernelBaseAddress() {
+	PKLDR_DATA_TABLE_ENTRY loadedModulesEntry = NULL;
+	NTSTATUS status = STATUS_NOT_FOUND;
 
-	 if (!ExAcquireResourceExclusiveLite(PsLoadedModuleResource, 1))
-		 return STATUS_ABANDONED;
+	if (!ExAcquireResourceExclusiveLite(PsLoadedModuleResource, 1))
+		return STATUS_ABANDONED;
 
-	 for (PLIST_ENTRY pListEntry = PsLoadedModuleList->InLoadOrderLinks.Flink;
-		 pListEntry != &PsLoadedModuleList->InLoadOrderLinks;
-		 pListEntry = pListEntry->Flink) {
-		 loadedModulesEntry = CONTAINING_RECORD(pListEntry, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+	for (PLIST_ENTRY pListEntry = PsLoadedModuleList->InLoadOrderLinks.Flink;
+		pListEntry != &PsLoadedModuleList->InLoadOrderLinks;
+		pListEntry = pListEntry->Flink) {
+		loadedModulesEntry = CONTAINING_RECORD(pListEntry, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
 
-		 if (_wcsnicmp(loadedModulesEntry->BaseDllName.Buffer, KERNEL_NAME, KERNEL_NAME_LEN) == 0) {
-			 KernelBaseInfo.KernelBaseAddress = reinterpret_cast<UINT64>(loadedModulesEntry->DllBase);
-			 KernelBaseInfo.KernelSize = loadedModulesEntry->SizeOfImage;
-			 NovaHypervisorLog(TRACE_FLAG_INFO, "Kernel image range: 0x%llx - 0x%llx",
-				 KernelBaseInfo.KernelBaseAddress,
-				 KernelBaseInfo.KernelBaseAddress + KernelBaseInfo.KernelSize);
-			 status = STATUS_SUCCESS;
-			 break;
-		 }
-	 }
+		if (_wcsnicmp(loadedModulesEntry->BaseDllName.Buffer, KERNEL_NAME, KERNEL_NAME_LEN) == 0) {
+			KernelBaseInfo.KernelBaseAddress = reinterpret_cast<UINT64>(loadedModulesEntry->DllBase);
+			KernelBaseInfo.KernelSize = loadedModulesEntry->SizeOfImage;
+			NovaHypervisorLog(TRACE_FLAG_INFO, "Kernel image range: 0x%llx - 0x%llx",
+				KernelBaseInfo.KernelBaseAddress,
+				KernelBaseInfo.KernelBaseAddress + KernelBaseInfo.KernelSize);
+			status = STATUS_SUCCESS;
+			break;
+		}
+	}
 
-	 ExReleaseResourceLite(PsLoadedModuleResource);
-	 return status;
- }
+	ExReleaseResourceLite(PsLoadedModuleResource);
+	return status;
+}
 
- void VmxHelper::SetMonitorTrapFlag(_In_ bool set) {
-	 ULONG64 cpuBasedVmExecControls = 0;
-	 __vmx_vmread(CPU_BASED_VM_EXEC_CONTROL, &cpuBasedVmExecControls);
-	 cpuBasedVmExecControls = set ? cpuBasedVmExecControls | CPU_BASED_MONITOR_TRAP_FLAG :
-		 cpuBasedVmExecControls & ~CPU_BASED_MONITOR_TRAP_FLAG;
-	 __vmx_vmwrite(CPU_BASED_VM_EXEC_CONTROL, cpuBasedVmExecControls);
- }
+void VmxHelper::SetMonitorTrapFlag(_In_ bool set) {
+	ULONG64 cpuBasedVmExecControls = 0;
+	__vmx_vmread(CPU_BASED_VM_EXEC_CONTROL, &cpuBasedVmExecControls);
+	cpuBasedVmExecControls = set ? cpuBasedVmExecControls | CPU_BASED_MONITOR_TRAP_FLAG :
+		cpuBasedVmExecControls & ~CPU_BASED_MONITOR_TRAP_FLAG;
+	WriteVmcsField(CPU_BASED_VM_EXEC_CONTROL, cpuBasedVmExecControls);
+}

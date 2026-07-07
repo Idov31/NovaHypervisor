@@ -5,7 +5,9 @@
 *.drawio
 *.drawio.bkp
 
+.*/
 *.md
+docs/
 !README.md
 
 # User-specific files

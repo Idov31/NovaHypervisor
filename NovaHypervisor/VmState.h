@@ -28,8 +28,9 @@ public:
 	UINT64 MsrBitmapPhysical;
 	VMX_VMXOFF_STATE VmxoffState;
 	PEPT_HOOKED_PAGE_DETAIL HookedPages;
-	PEPT_HOOKED_PAGE_DETAIL HookedPage;
+	EPT_MTF_RESTORE_CONTEXT MtfRestore;
 	Ept* EptInstance;
+	bool IsVmxOn;
 
 	VmState() = default;
 	~VmState() = default;
@@ -41,4 +42,3 @@ public:
 		FreeVirtualMemory(p);
 	}
 };
-

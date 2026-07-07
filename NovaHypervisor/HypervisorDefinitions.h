@@ -751,6 +751,9 @@ typedef struct _VMM_EPT_DYNAMIC_SPLIT
 		PEPT_PML2_ENTRY Entry;
 		PEPT_PML2_POINTER Pointer;
 	};
+	EPT_PML2_ENTRY OriginalEntry;
+	ULONG HookCount;
+	bool CanCoalesce;
 
 } VMM_EPT_DYNAMIC_SPLIT, * PVMM_EPT_DYNAMIC_SPLIT;
 
@@ -1445,6 +1448,13 @@ typedef union _MOV_CR_QUALIFICATION
 	} Fields;
 } MOV_CR_QUALIFICATION, * PMOV_CR_QUALIFICATION;
 
+typedef struct _EPT_MTF_RESTORE_CONTEXT {
+	PEPT_PML1_ENTRY EntryAddress;
+	EPT_PML1_ENTRY ChangedEntry;
+	UINT64 VirtualAddress;
+	bool Active;
+} EPT_MTF_RESTORE_CONTEXT, * PEPT_MTF_RESTORE_CONTEXT;
+
 typedef struct _EPT_HOOKED_PAGE_DETAIL {
 	LIST_ENTRY Entry;
 	UINT64 VirtualAddress;
@@ -1453,6 +1463,7 @@ typedef struct _EPT_HOOKED_PAGE_DETAIL {
 	PEPT_PML1_ENTRY EntryAddress;
 	EPT_PML1_ENTRY OriginalEntry;
 	EPT_PML1_ENTRY ChangedEntry;
+	PVMM_EPT_DYNAMIC_SPLIT DynamicSplit;
 	PCHAR InlineHook;
 	bool IsExecutionHook;
 } EPT_HOOKED_PAGE_DETAIL, * PEPT_HOOKED_PAGE_DETAIL;

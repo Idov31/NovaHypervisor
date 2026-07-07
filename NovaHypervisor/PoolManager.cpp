@@ -24,19 +24,28 @@ PoolManager::PoolManager() {
 	}
 	NovaHypervisorLog(TRACE_FLAG_DEBUG, "Allocated initial blocks.");
 
+	runningLock.Lock();
+	running = true;
+	runningLock.Unlock();
+
 	NTSTATUS status = PsCreateSystemThread(&this->allocationThread, GENERIC_ALL, &objectAttributes, NULL, NULL, 
 		(PKSTART_ROUTINE)&ProcessAllocationThread, this);
 
-	if (!NT_SUCCESS(status))
+	if (!NT_SUCCESS(status)) {
+		runningLock.Lock();
+		running = false;
+		runningLock.Unlock();
 		ExRaiseStatus(status);
+	}
 	NovaHypervisorLog(TRACE_FLAG_DEBUG, "Started allocation thread.");
 
-	running = true;
 	status = PsCreateSystemThread(&this->freeThread, GENERIC_ALL, &objectAttributes, NULL, NULL,
 		(PKSTART_ROUTINE)&ProcessFreeThread, this);
 
-	if (!NT_SUCCESS(status))
+	if (!NT_SUCCESS(status)) {
+		StopThreads();
 		ExRaiseStatus(status);
+	}
 	NovaHypervisorLog(TRACE_FLAG_DEBUG, "Started free thread.");
 }
 
@@ -108,7 +117,7 @@ bool PoolManager::AllocateInternal(_In_ ALLOCATION_TYPE type, _In_ bool isInit) 
 }
 
 _IRQL_requires_max_(APC_LEVEL)
-void PoolManager::FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
+bool PoolManager::FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
 	PPOOL_ALLOCATION allocation = nullptr;
 	PLIST_ENTRY head = nullptr;
 	SIZE_T allocationSize = 0;
@@ -123,7 +132,7 @@ void PoolManager::FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
 		allocationSize = sizeof(EPT_HOOKED_PAGE_DETAIL);
 		break;
 	default:
-		return;
+		return false;
 	}
 	Spinlock& lock = (type == SPLIT_2MB_PAGING_TO_4KB_PAGE) ?
 		pagingAllocations.Lock : eptHookAllocations.Lock;
@@ -135,21 +144,21 @@ void PoolManager::FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
 		if (allocation->Address == address) {
 			RtlSecureZeroMemory(allocation->Address, allocationSize);
 			allocation->IsUsed = false;
-			break;
+			return true;
 		}
 	}
+	return false;
 }
 
 /*
 * Description:
-* FindFreeSlot is responsible for asking to free memory allocation by pushing it to the free requests queue.
+* FindFreeSlot is responsible for finding and reserving an unused allocation in a pool list.
 *
 * Parameters:
-* @address [_In_ PVOID]			  -- The address to free.
 * @type	   [_In_ ALLOCATION_TYPE] -- The type of the allocation.
 *
 * Returns:
-* There is no return value.
+* @slot	   [PVOID]				  -- The reserved allocation, or nullptr when no free slot exists.
 */
 PVOID PoolManager::FindFreeSlot(_In_ ALLOCATION_TYPE type) {
 	PPOOL_ALLOCATION allocation = nullptr;
@@ -181,9 +190,38 @@ PVOID PoolManager::FindFreeSlot(_In_ ALLOCATION_TYPE type) {
 	return nullptr;
 }
 
+UINT64 PoolManager::CountFreeSlots(_In_ ALLOCATION_TYPE type) {
+	PPOOL_ALLOCATION allocation = nullptr;
+	PLIST_ENTRY head = nullptr;
+	Spinlock* lock = nullptr;
+	UINT64 freeSlots = 0;
+
+	switch (type) {
+	case SPLIT_2MB_PAGING_TO_4KB_PAGE:
+		head = &pagingAllocations.Head;
+		lock = &pagingAllocations.Lock;
+		break;
+	case EPT_HOOK_PAGE:
+		head = &eptHookAllocations.Head;
+		lock = &eptHookAllocations.Lock;
+		break;
+	default:
+		return 0;
+	}
+	AutoLock<Spinlock> autoLock(*lock);
+
+	for (PLIST_ENTRY entry = head->Flink; entry != head; entry = entry->Flink) {
+		allocation = CONTAINING_RECORD(entry, POOL_ALLOCATION, Entry);
+
+		if (!allocation->IsUsed)
+			freeSlots++;
+	}
+	return freeSlots;
+}
+
 /*
 * Description:
-* Allocate is responsible for asking for an allocation by pushing it to the free requests queue.
+* Allocate is responsible for finding a free allocation or queueing background growth when none is available.
 *
 * Parameters:
 * @type		  [_In_ ALLOCATION_TYPE] -- The type of the allocation.
@@ -238,43 +276,38 @@ PVOID PoolManager::Allocate(_In_ ALLOCATION_TYPE type) {
 	return allocation;
 }
 
+PVOID PoolManager::TryAllocate(_In_ ALLOCATION_TYPE type) {
+	if (!IsValidAllocationType(type))
+		return nullptr;
+	return FindFreeSlot(type);
+}
+
+bool PoolManager::EnsureFreeSlots(_In_ ALLOCATION_TYPE type, _In_ UINT64 requiredFreeSlots) {
+	if (!IsValidAllocationType(type))
+		return false;
+
+	while (CountFreeSlots(type) < requiredFreeSlots) {
+		if (!AllocateInternal(type))
+			return false;
+	}
+	return true;
+}
+
 /*
 * Description:
-* Free is responsible for asking to free memory allocation by pushing it to the free requests queue.
+* Free is responsible for synchronously returning an allocation to its pool list.
 *
 * Parameters:
 * @address [_In_ PVOID]			  -- The address to free.
 * @type	   [_In_ ALLOCATION_TYPE] -- The type of the allocation.
 *
 * Returns:
-* There is no return value.
+* @status [bool]				  -- True if the allocation was returned to the pool.
 */
-void PoolManager::Free(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
-	bool queued = false;
-	UINT64 waitCount = 0;
-	UINT32 wait = 1;
-	POOL_ALLOCATION allocation = { 0 };
-
+bool PoolManager::Free(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
 	if (!address || !IsValidAllocationType(type))
-		return;
-
-	allocation.Address = address;
-	allocation.Type = type;
-
-	queued = freeRequests.Insert(allocation);
-
-	if (!queued) {
-		do {
-			for (UINT32 i = 0; i < wait; i++)
-				_mm_pause();
-			queued = freeRequests.Insert(allocation);
-
-			wait = wait * 2 > MAX_WAIT ? MAX_WAIT : wait * 2;
-
-			if (wait == MAX_WAIT)
-				waitCount++;
-		} while (!queued && waitCount < MAX_WAIT_ITERATIONS);
-	}
+		return false;
+	return FreeInternal(address, type);
 }
 
 /*

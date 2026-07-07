@@ -229,6 +229,15 @@ PEPT_PML2_ENTRY Ept::GetPml2Entry(_In_ SIZE_T physicalAddress) {
 	return &eptPageTable->PML2[directoryPointer][directory];
 }
 
+PVMM_EPT_DYNAMIC_SPLIT Ept::GetDynamicSplit(_In_ SIZE_T physicalAddress) {
+	PEPT_PML2_ENTRY pml2Entry = GetPml2Entry(physicalAddress);
+
+	if (!pml2Entry || pml2Entry->LargePage)
+		return nullptr;
+	PEPT_PML2_POINTER pml2Pointer = reinterpret_cast<PEPT_PML2_POINTER>(pml2Entry);
+	return reinterpret_cast<PVMM_EPT_DYNAMIC_SPLIT>(GetVirtualAddress(pml2Pointer->PageFrameNumber * PAGE_SIZE));
+}
+
 /*
 * Description:
 * SplitLargePage is responsible for splitting a large page into smaller pages.
@@ -236,14 +245,19 @@ PEPT_PML2_ENTRY Ept::GetPml2Entry(_In_ SIZE_T physicalAddress) {
 * Parameters:
 * @buffer		   [_Inout_ PVOID]				 -- The buffer to store the split.
 * @physicalAddress [_In_ SIZE_T]				 -- The physical address to split.
+* @canCoalesce	   [_In_ bool]					 -- Whether this split can be restored to a large page.
+* @splitCreated	   [_Out_opt_ bool*]			 -- True when this call consumed the split buffer.
 *
 * Returns:
 * @status		   [bool]						 -- True if splitted else false.
 */
-bool Ept::SplitLargePage(_Inout_ PVOID buffer, _In_ SIZE_T physicalAddress) {
+bool Ept::SplitLargePage(_Inout_ PVOID buffer, _In_ SIZE_T physicalAddress, _In_ bool canCoalesce, _Out_opt_ bool* splitCreated) {
 
 	EPT_PML1_ENTRY pml1Template = { 0 };
 	EPT_PML2_POINTER newSplitPtr = { 0 };
+
+	if (splitCreated)
+		*splitCreated = false;
 
 	if (!buffer) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Buffer is not allocated");
@@ -258,10 +272,8 @@ bool Ept::SplitLargePage(_Inout_ PVOID buffer, _In_ SIZE_T physicalAddress) {
 	}
 
 	// If this large page is not marked a large page, that means it's already splitted.
-	if (!pml2Entry->LargePage) {
-		poolManager->Free(buffer, SPLIT_2MB_PAGING_TO_4KB_PAGE);
+	if (!pml2Entry->LargePage)
 		return true;
-	}
 	PVMM_EPT_DYNAMIC_SPLIT newSplit = static_cast<PVMM_EPT_DYNAMIC_SPLIT>(buffer);
 
 	if (!newSplit) {
@@ -270,6 +282,9 @@ bool Ept::SplitLargePage(_Inout_ PVOID buffer, _In_ SIZE_T physicalAddress) {
 	}
 	RtlSecureZeroMemory(newSplit, sizeof(VMM_EPT_DYNAMIC_SPLIT));
 	newSplit->Entry = pml2Entry;
+	newSplit->OriginalEntry = *pml2Entry;
+	newSplit->HookCount = 0;
+	newSplit->CanCoalesce = canCoalesce;
 
 	// Make a template for RWX and copy it to all PML1 entries.
 	pml1Template.Flags = 0;
@@ -296,6 +311,8 @@ bool Ept::SplitLargePage(_Inout_ PVOID buffer, _In_ SIZE_T physicalAddress) {
 	newSplitPtr.PageFrameNumber = GetPhysicalAddress(reinterpret_cast<UINT64>(&newSplit->PML1[0])) / PAGE_SIZE;
 	RtlCopyMemory(pml2Entry, &newSplitPtr, sizeof(newSplitPtr));
 
+	if (splitCreated)
+		*splitCreated = true;
 	return true;
 }
 
@@ -326,7 +343,7 @@ bool Ept::SetupPML2Entry(_Inout_ PEPT_PML2_ENTRY newEntry, _In_ SIZE_T pageFrame
 	PVOID buffer = poolManager->Allocate(SPLIT_2MB_PAGING_TO_4KB_PAGE);
 
 	if (buffer)
-		return SplitLargePage(buffer, pageFrameNumber * SIZE_2_MB);
+		return SplitLargePage(buffer, pageFrameNumber * SIZE_2_MB, false);
 	return false;
 }
 
@@ -462,7 +479,10 @@ bool Ept::HandlePageHookExit(_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violation
 			handled = HandleHookedPage(hookedEntry, violationQualification, guestLinearAddress, guestRip, &restoreHookAfterInstruction);
 
 			if (restoreHookAfterInstruction) {
-				GuestState[currentProcessor].HookedPage = hookedEntry;
+				GuestState[currentProcessor].MtfRestore.EntryAddress = hookedEntry->EntryAddress;
+				GuestState[currentProcessor].MtfRestore.ChangedEntry = hookedEntry->ChangedEntry;
+				GuestState[currentProcessor].MtfRestore.VirtualAddress = hookedEntry->VirtualAddress;
+				GuestState[currentProcessor].MtfRestore.Active = true;
 				VmxHelper::SetMonitorTrapFlag(true);
 			}
 			break;
@@ -538,7 +558,8 @@ bool Ept::HandleHookedPage(_Inout_ EPT_HOOKED_PAGE_DETAIL* hookedEntryDetails,
 	}
 
 	if (operationAllowed) {
-		SetPML1AndInvalidateTLB(hookedEntryDetails->EntryAddress, hookedEntryDetails->OriginalEntry, SINGLE_CONTEXT);
+		if (!SetPML1AndInvalidateTLB(hookedEntryDetails->EntryAddress, hookedEntryDetails->OriginalEntry, SINGLE_CONTEXT))
+			return false;
 		*restoreHookAfterInstruction = true;
 	}
 	else if (handled) {
@@ -595,14 +616,19 @@ void Ept::HandleMisconfiguration(_In_ UINT64 guestAddress) {
 * HandleMonitorTrapFlag is responsible for handling MTF event.
 *
 * Parameters:
-* @hookedEntry [_Inout_ PEPT_HOOKED_PAGE_DETAIL] -- The hooked page detail.
+* @restoreContext [_Inout_ PEPT_MTF_RESTORE_CONTEXT] -- The pending restore context.
 *
 * Returns:
 * There is no return value.
 */
-void Ept::HandleMonitorTrapFlag(_Inout_ PEPT_HOOKED_PAGE_DETAIL hookedEntry) {
-	SetPML1AndInvalidateTLB(hookedEntry->EntryAddress, hookedEntry->ChangedEntry, SINGLE_CONTEXT);
-	NovaHypervisorLog(TRACE_FLAG_INFO, "Restored hooked page 0x%llx", hookedEntry->VirtualAddress);
+void Ept::HandleMonitorTrapFlag(_Inout_ PEPT_MTF_RESTORE_CONTEXT restoreContext) {
+	if (!restoreContext || !restoreContext->Active || !restoreContext->EntryAddress)
+		return;
+
+	if (SetPML1AndInvalidateTLB(restoreContext->EntryAddress, restoreContext->ChangedEntry, SINGLE_CONTEXT))
+		NovaHypervisorLog(TRACE_FLAG_INFO, "Restored hooked page 0x%llx", restoreContext->VirtualAddress);
+	else
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to restore hooked page 0x%llx after MTF", restoreContext->VirtualAddress);
 }
 
 bool Ept::IsAccessFromKernelImage(_In_ UINT64 guestRip) const {
@@ -632,12 +658,20 @@ bool Ept::IsAccessFromKernelImage(_In_ UINT64 guestRip) const {
 bool Ept::RootModePageHook(_In_ PVOID targetFunc, _In_ UINT8 permissions) {
 	EPT_PML1_ENTRY changedEntry = { 0 };
 	ULONG currentProcessorIndex = KeGetCurrentProcessorIndex();
+	bool splitCreated = false;
+	PVMM_EPT_DYNAMIC_SPLIT dynamicSplit = nullptr;
+	PVOID splitBuffer = nullptr;
 
 	if (GuestState[currentProcessorIndex].IsOnVmxRoot && !GuestState[currentProcessorIndex].IsLaunched)
 		return false;
 
 	if (permissions & EPT_PAGE_WRITE && !(permissions & EPT_PAGE_READ)) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Invalid permissions to perform a hook");
+		return false;
+	}
+
+	if (!executeOnlySupport && (permissions & EPT_PAGE_EXECUTE) && !(permissions & EPT_PAGE_READ)) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Execute-only EPT permission requested but unsupported by this processor");
 		return false;
 	}
 
@@ -654,35 +688,59 @@ bool Ept::RootModePageHook(_In_ PVOID targetFunc, _In_ UINT8 permissions) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Target address could not be mapped to physical memory");
 		return false;
 	}
-	PVOID targetBuffer = poolManager->Allocate(SPLIT_2MB_PAGING_TO_4KB_PAGE);
+	PEPT_PML2_ENTRY pml2Entry = GetPml2Entry(physicalFuncAddress);
 
-	if (!targetBuffer) {
-		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to allocate memory for the target buffer");
+	if (!pml2Entry) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to get PML2 entry of the target address: 0x%llx", physicalFuncAddress);
 		return false;
 	}
 
-	if (!SplitLargePage(targetBuffer, physicalFuncAddress)) {
-		NovaHypervisorLog(TRACE_FLAG_ERROR, "Could not split page for the address: 0x%llx", physicalFuncAddress);
-		poolManager->Free(targetBuffer, SPLIT_2MB_PAGING_TO_4KB_PAGE);
-		return false;
+	if (pml2Entry->LargePage) {
+		splitBuffer = poolManager->TryAllocate(SPLIT_2MB_PAGING_TO_4KB_PAGE);
+
+		if (!splitBuffer) {
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "No reserved split buffer is available for target address: 0x%llx", physicalFuncAddress);
+			return false;
+		}
+
+		if (!SplitLargePage(splitBuffer, physicalFuncAddress, true, &splitCreated)) {
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "Could not split page for the address: 0x%llx", physicalFuncAddress);
+			poolManager->Free(splitBuffer, SPLIT_2MB_PAGING_TO_4KB_PAGE);
+			return false;
+		}
+
+		if (splitCreated)
+			dynamicSplit = static_cast<PVMM_EPT_DYNAMIC_SPLIT>(splitBuffer);
+		else {
+			poolManager->Free(splitBuffer, SPLIT_2MB_PAGING_TO_4KB_PAGE);
+			splitBuffer = nullptr;
+		}
 	}
 	PEPT_PML1_ENTRY pml1Entry = GetPml1Entry(physicalFuncAddress);
 
 	if (!pml1Entry) {
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to get PML1 entry of the target address: 0x%llx", physicalFuncAddress);
-		poolManager->Free(targetBuffer, SPLIT_2MB_PAGING_TO_4KB_PAGE);
+		if (dynamicSplit)
+			TryCoalesceDynamicSplit(dynamicSplit);
+		return false;
+	}
+	if (!dynamicSplit)
+		dynamicSplit = GetDynamicSplit(physicalFuncAddress);
+
+	if (!dynamicSplit) {
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to locate dynamic split for target address: 0x%llx", physicalFuncAddress);
 		return false;
 	}
 	changedEntry.Flags = pml1Entry->Flags;
-	changedEntry.ReadAccess = permissions & EPT_PAGE_READ;
-	changedEntry.WriteAccess = permissions & EPT_PAGE_WRITE;
-	changedEntry.ExecuteAccess = permissions & EPT_PAGE_EXECUTE;
+	changedEntry.ReadAccess = (permissions & EPT_PAGE_READ) != 0;
+	changedEntry.WriteAccess = (permissions & EPT_PAGE_WRITE) != 0;
+	changedEntry.ExecuteAccess = (permissions & EPT_PAGE_EXECUTE) != 0;
 
-	PEPT_HOOKED_PAGE_DETAIL hookedEntry = static_cast<PEPT_HOOKED_PAGE_DETAIL>(poolManager->Allocate(EPT_HOOK_PAGE));
+	PEPT_HOOKED_PAGE_DETAIL hookedEntry = static_cast<PEPT_HOOKED_PAGE_DETAIL>(poolManager->TryAllocate(EPT_HOOK_PAGE));
 
 	if (!hookedEntry) {
-		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to allocate memory for the hooked entry");
-		poolManager->Free(targetBuffer, SPLIT_2MB_PAGING_TO_4KB_PAGE);
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "No reserved hook record is available");
+		TryCoalesceDynamicSplit(dynamicSplit);
 		return false;
 	}
 	hookedEntry->IsExecutionHook = false;
@@ -692,48 +750,22 @@ bool Ept::RootModePageHook(_In_ PVOID targetFunc, _In_ UINT8 permissions) {
 	hookedEntry->EntryAddress = pml1Entry;
 	hookedEntry->OriginalEntry = *pml1Entry;
 	hookedEntry->ChangedEntry = changedEntry;
+	hookedEntry->DynamicSplit = dynamicSplit;
 	this->hookedPagesLock.Lock();
 	InsertHeadList(this->hookedPages, &(hookedEntry->Entry));
+	dynamicSplit->HookCount++;
 	this->hookedPagesLock.Unlock();
 
 	// Invalidate the entry in the TLB caches so it will not conflict with the actual paging structure.
-	if (GuestState[currentProcessorIndex].IsLaunched)
-		SetPML1AndInvalidateTLB(pml1Entry, changedEntry, SINGLE_CONTEXT);
+	if (GuestState[currentProcessorIndex].IsLaunched) {
+		if (!SetPML1AndInvalidateTLB(pml1Entry, changedEntry, SINGLE_CONTEXT)) {
+			ReleaseHookedPageRecord(hookedEntry);
+			return false;
+		}
+	}
 	else
 		pml1Entry->Flags = changedEntry.Flags;
 	return true;
-}
-
-/*
-* Description:
-* PageHook is responsible for hooking a page.
-*
-* Parameters:
-* @targetFunc	[_In_ PVOID] -- The target function to hook.
-* @permissions  [_In_ UINT8] -- The permissions for the page.
-*
-* Returns:
-* @status		[bool]	     -- True if the page is hooked, otherwise false.
-*/
-bool Ept::PageHook(_In_ PVOID targetFunc, _In_ UINT8 permissions) {
-	ULONG currentProcessor = KeGetCurrentProcessorIndex();
-
-	if (GuestState[currentProcessor].IsLaunched) {
-		if (NT_SUCCESS(AsmVmxVmcall(VMCALL_EXEC_HOOK_PAGE, reinterpret_cast<UINT64>(targetFunc), permissions, NULL))) {
-			NovaHypervisorLog(TRACE_FLAG_INFO, "Hook applied from vmx root mode");
-			KeIpiGenericCall(reinterpret_cast<PKIPI_BROADCAST_WORKER>(VmxHelper::InvalidateEptByVmcall), this->eptPointer.Flags);
-			return true;
-		}
-	}
-	else {
-		if (RootModePageHook(targetFunc, permissions)) {
-			NovaHypervisorLog(TRACE_FLAG_INFO, "Hook applied (vm not launched yet)");
-			return true;
-		}
-	}
-
-	NovaHypervisorLog(TRACE_FLAG_INFO, "Hook not applied");
-	return false;
 }
 
 /*
@@ -756,24 +788,30 @@ UCHAR Ept::GetMemoryType(_In_ ULONG64 pfn, _In_ bool isLargePage) {
 		currentMemoryRange = &this->memoryRanges[currentMtrrRange];
 
 		if (addressOfPage >= currentMemoryRange->PhysicalBaseAddress &&
-			addressOfPage < currentMemoryRange->PhysicalEndAddress) {
+			addressOfPage <= currentMemoryRange->PhysicalEndAddress) {
 			if (currentMemoryRange->FixedRange) {
 				targetMemoryType = currentMemoryRange->MemoryType;
 				break;
 			}
 
-			if (targetMemoryType == MEMORY_TYPE_UNCACHEABLE) {
-				targetMemoryType = currentMemoryRange->MemoryType;
+			if (currentMemoryRange->MemoryType == MEMORY_TYPE_UNCACHEABLE) {
+				targetMemoryType = MEMORY_TYPE_UNCACHEABLE;
 				break;
 			}
 
-			if (targetMemoryType == MEMORY_TYPE_WRITE_THROUGH || currentMemoryRange->MemoryType == MEMORY_TYPE_WRITE_THROUGH) {
-				if (targetMemoryType == MEMORY_TYPE_WRITE_BACK) {
-					targetMemoryType = MEMORY_TYPE_WRITE_THROUGH;
-					continue;
-				}
+			if (targetMemoryType == 0xFF) {
+				targetMemoryType = currentMemoryRange->MemoryType;
+				continue;
 			}
-			targetMemoryType = currentMemoryRange->MemoryType;
+
+			if ((targetMemoryType == MEMORY_TYPE_WRITE_BACK && currentMemoryRange->MemoryType == MEMORY_TYPE_WRITE_THROUGH) ||
+				(targetMemoryType == MEMORY_TYPE_WRITE_THROUGH && currentMemoryRange->MemoryType == MEMORY_TYPE_WRITE_BACK)) {
+				targetMemoryType = MEMORY_TYPE_WRITE_THROUGH;
+				continue;
+			}
+
+			if (targetMemoryType != currentMemoryRange->MemoryType)
+				targetMemoryType = MEMORY_TYPE_UNCACHEABLE;
 		}
 	}
 
@@ -853,45 +891,103 @@ bool Ept::IsValidForLargePage(_In_ ULONG64 pfn) {
 * @invalidationType [_In_ INVEPT_TYPE]		  -- The invalidation type.
 *
 * Returns:
-* There is no return value.
+* @status		    [bool]				  -- True if the entry and invalidation succeeded.
 */
 _Use_decl_annotations_
-void Ept::SetPML1AndInvalidateTLB(_Inout_ PEPT_PML1_ENTRY pml1Entry, _In_ EPT_PML1_ENTRY pml1Value, _In_ INVEPT_TYPE invalidationType) {
+bool Ept::SetPML1AndInvalidateTLB(_Inout_ PEPT_PML1_ENTRY pml1Entry, _In_ EPT_PML1_ENTRY pml1Value, _In_ INVEPT_TYPE invalidationType) {
+	if (!pml1Entry)
+		return false;
 	pml1Entry->Flags = pml1Value.Flags;
+	NTSTATUS status = STATUS_SUCCESS;
 
 	switch (invalidationType) {
 	case SINGLE_CONTEXT:
-		VmxHelper::InvalidateEpt(this->eptPointer.Flags);
+		status = VmxHelper::InvalidateEpt(this->eptPointer.Flags);
 		break;
 	case ALL_CONTEXTS:
-		VmxHelper::InvalidateEpt();
+		status = VmxHelper::InvalidateEpt();
 		break;
 	default:
 		break;
 	}
+	return NT_SUCCESS(status);
 }
 
-/*
-* Description:
-* PageUnhook is responsible to dispatch a vmcall to remove a hooked page.
-*
-* Parameters:
-* @guestVirtualAddress [_In_ UINT64] -- The guest virtual address.
-*
-* Returns:
-* @status			   [bool]		 -- True if the page is unhooked, otherwise false.
-*/
-bool Ept::PageUnhook(_In_ UINT64 guestVirtualAddress) {
-	if (GuestState[KeGetCurrentProcessorNumber()].IsOnVmxRoot)
-		return false;
-	UINT64 alignedGuestVirtualAddress = reinterpret_cast<UINT64>(PAGE_ALIGN(guestVirtualAddress));
-	PEPT_HOOKED_PAGE_DETAIL hookedEntry = GetHookedPage(alignedGuestVirtualAddress);
+void Ept::ClearPendingMtfRestore(_In_ PEPT_HOOKED_PAGE_DETAIL hookedEntry) {
+	if (!hookedEntry || !GuestState)
+		return;
+	ULONG currentProcessor = KeGetCurrentProcessorNumber();
+	ULONG processorCount = KeQueryActiveProcessorCount(0);
 
-	if (hookedEntry) {
-		KeGenericCallDpc(UnhookSinglePage, reinterpret_cast<PVOID>(hookedEntry->VirtualAddress));
-		return true;
+	for (ULONG processorIndex = 0; processorIndex < processorCount; processorIndex++) {
+		if (GuestState[processorIndex].EptInstance != this)
+			continue;
+		PEPT_MTF_RESTORE_CONTEXT restoreContext = &GuestState[processorIndex].MtfRestore;
+
+		if (restoreContext->Active &&
+			(restoreContext->EntryAddress == hookedEntry->EntryAddress ||
+				restoreContext->VirtualAddress == hookedEntry->VirtualAddress)) {
+			RtlSecureZeroMemory(restoreContext, sizeof(*restoreContext));
+
+			if (processorIndex == currentProcessor)
+				VmxHelper::SetMonitorTrapFlag(false);
+		}
 	}
-	return false;
+}
+
+bool Ept::TryCoalesceDynamicSplit(_Inout_ PVMM_EPT_DYNAMIC_SPLIT split) {
+	if (!split || !split->CanCoalesce || split->HookCount != 0)
+		return true;
+
+	if (!split->Entry)
+		return false;
+	EPT_PML2_ENTRY splitPointerEntry = *split->Entry;
+	split->Entry->Flags = split->OriginalEntry.Flags;
+	NTSTATUS status = STATUS_SUCCESS;
+	ULONG currentProcessor = KeGetCurrentProcessorNumber();
+
+	if (GuestState && GuestState[currentProcessor].IsLaunched)
+		status = VmxHelper::InvalidateEpt(this->eptPointer.Flags);
+
+	if (!NT_SUCCESS(status)) {
+		split->Entry->Flags = splitPointerEntry.Flags;
+		if (GuestState && GuestState[currentProcessor].IsLaunched) {
+			NTSTATUS rollbackStatus = VmxHelper::InvalidateEpt(this->eptPointer.Flags);
+
+			if (!NT_SUCCESS(rollbackStatus))
+				NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to invalidate EPT after restoring dynamic split pointer: 0x%08X", rollbackStatus);
+		}
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to coalesce dynamic EPT split");
+		return false;
+	}
+	return poolManager->Free(split, SPLIT_2MB_PAGING_TO_4KB_PAGE);
+}
+
+bool Ept::ReleaseHookedPageRecord(_Inout_ PEPT_HOOKED_PAGE_DETAIL hookedEntry) {
+	if (!hookedEntry)
+		return false;
+	ULONG currentProcessor = KeGetCurrentProcessorNumber();
+	bool restored = true;
+
+	if (GuestState && GuestState[currentProcessor].IsLaunched)
+		restored = SetPML1AndInvalidateTLB(hookedEntry->EntryAddress, hookedEntry->OriginalEntry, SINGLE_CONTEXT);
+	else if (hookedEntry->EntryAddress)
+		hookedEntry->EntryAddress->Flags = hookedEntry->OriginalEntry.Flags;
+
+	ClearPendingMtfRestore(hookedEntry);
+	this->hookedPagesLock.Lock();
+	RemoveEntryList(&hookedEntry->Entry);
+	InitializeListHead(&hookedEntry->Entry);
+
+	PVMM_EPT_DYNAMIC_SPLIT dynamicSplit = hookedEntry->DynamicSplit;
+
+	if (dynamicSplit && dynamicSplit->HookCount > 0)
+		dynamicSplit->HookCount--;
+	bool coalesced = TryCoalesceDynamicSplit(dynamicSplit);
+	this->hookedPagesLock.Unlock();
+
+	bool freed = poolManager->Free(hookedEntry, EPT_HOOK_PAGE);
+	return restored && coalesced && freed;
 }
 
 /*
@@ -899,7 +995,7 @@ bool Ept::PageUnhook(_In_ UINT64 guestVirtualAddress) {
 * PageUnhookVmcall is responsible to invalidate the TLB for a specific page.
 *
 * Parameters:
-* @guestPhysicalAddress [_In_ UINT64] -- The guest virtual address.
+* @guestVirtualAddress [_In_ UINT64] -- The guest virtual address.
 *
 * Returns:
 * @status			    [bool]		  -- True if the page is unhooked, otherwise false.
@@ -918,12 +1014,8 @@ bool Ept::PageUnhookVmcall(_In_ UINT64 guestVirtualAddress) {
 		hookedEntry = CONTAINING_RECORD(entry, EPT_HOOKED_PAGE_DETAIL, Entry);
 
 		if (hookedEntry->VirtualAddress == alignedGuestVirtualAddress) {
-			SetPML1AndInvalidateTLB(hookedEntry->EntryAddress, hookedEntry->OriginalEntry, SINGLE_CONTEXT);
-			RemoveEntryList(&hookedEntry->Entry);
-			InitializeListHead(&hookedEntry->Entry);
 			this->hookedPagesLock.Unlock();
-			poolManager->Free(hookedEntry, EPT_HOOK_PAGE);
-			return true;
+			return ReleaseHookedPageRecord(hookedEntry);
 		}
 	}
 	this->hookedPagesLock.Unlock();
@@ -942,23 +1034,26 @@ bool Ept::PageUnhookVmcall(_In_ UINT64 guestVirtualAddress) {
 */
 bool Ept::UnhookAllPagesVmcall() {
 	PEPT_HOOKED_PAGE_DETAIL hookedEntry = nullptr;
+	bool status = true;
 
 	if (!GuestState[KeGetCurrentProcessorNumber()].IsOnVmxRoot)
 		return false;
-	this->hookedPagesLock.Lock();
-	PLIST_ENTRY entry = this->hookedPages->Flink;
 
-	while (entry != this->hookedPages) {
-		PLIST_ENTRY nextEntry = entry->Flink;
+	for (;;) {
+		this->hookedPagesLock.Lock();
+
+		if (IsListEmpty(this->hookedPages)) {
+			this->hookedPagesLock.Unlock();
+			break;
+		}
+		PLIST_ENTRY entry = this->hookedPages->Flink;
 		hookedEntry = CONTAINING_RECORD(entry, EPT_HOOKED_PAGE_DETAIL, Entry);
-		SetPML1AndInvalidateTLB(hookedEntry->EntryAddress, hookedEntry->OriginalEntry, SINGLE_CONTEXT);
-		RemoveEntryList(&hookedEntry->Entry);
-		InitializeListHead(&hookedEntry->Entry);
-		poolManager->Free(hookedEntry, EPT_HOOK_PAGE);
-		entry = nextEntry;
+		this->hookedPagesLock.Unlock();
+
+		if (!ReleaseHookedPageRecord(hookedEntry))
+			status = false;
 	}
-	this->hookedPagesLock.Unlock();
-	return true;
+	return status;
 }
 
 /*
@@ -1033,16 +1128,23 @@ PEPT_HOOKED_PAGE_DETAIL Ept::GetHookedPage(_In_ UINT64 guestVirtualAddress) {
 
 void Ept::ReleaseAllHookedPageRecords() {
 	PEPT_HOOKED_PAGE_DETAIL hookedEntry = nullptr;
-	this->hookedPagesLock.Lock();
-	PLIST_ENTRY entry = this->hookedPages->Flink;
+	bool status = true;
 
-	while (entry != this->hookedPages) {
-		PLIST_ENTRY nextEntry = entry->Flink;
+	for (;;) {
+		this->hookedPagesLock.Lock();
+
+		if (IsListEmpty(this->hookedPages)) {
+			this->hookedPagesLock.Unlock();
+			break;
+		}
+		PLIST_ENTRY entry = this->hookedPages->Flink;
 		hookedEntry = CONTAINING_RECORD(entry, EPT_HOOKED_PAGE_DETAIL, Entry);
-		RemoveEntryList(entry);
-		InitializeListHead(&hookedEntry->Entry);
-		poolManager->Free(hookedEntry, EPT_HOOK_PAGE);
-		entry = nextEntry;
+		this->hookedPagesLock.Unlock();
+
+		if (!ReleaseHookedPageRecord(hookedEntry))
+			status = false;
 	}
-	this->hookedPagesLock.Unlock();
+
+	if (!status)
+		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to release all hooked page records cleanly");
 }

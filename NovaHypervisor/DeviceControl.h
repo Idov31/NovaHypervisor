@@ -16,4 +16,11 @@ constexpr auto VALID_KERNELMODE_MEMORY = [](_In_ size_t address) -> bool {
 	return address > 0x8000000000000000 && address < 0xFFFFFFFFFFFFFFFF;
 };
 
+typedef struct _IPI_PAGE_OPERATION_CONTEXT {
+	HookedPage HookRequest;
+	UINT64 Address;
+	NTSTATUS* ProcessorStatuses;
+	ULONG ProcessorCount;
+} IPI_PAGE_OPERATION_CONTEXT, * PIPI_PAGE_OPERATION_CONTEXT;
+
 DRIVER_DISPATCH NovaDeviceControl;

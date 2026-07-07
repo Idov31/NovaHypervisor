@@ -196,9 +196,9 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState)
 			break;
 		}
 		case EXIT_REASON_MONITOR_TRAP_FLAG: {
-			if (GuestState[currentProcessorIndex].HookedPage) {
-				currentEptInstance->HandleMonitorTrapFlag(GuestState[currentProcessorIndex].HookedPage);
-				GuestState[currentProcessorIndex].HookedPage = NULL;
+			if (GuestState[currentProcessorIndex].MtfRestore.Active) {
+				currentEptInstance->HandleMonitorTrapFlag(&GuestState[currentProcessorIndex].MtfRestore);
+				RtlSecureZeroMemory(&GuestState[currentProcessorIndex].MtfRestore, sizeof(GuestState[currentProcessorIndex].MtfRestore));
 			}
 			VmxHelper::SetMonitorTrapFlag(false);
 			break;

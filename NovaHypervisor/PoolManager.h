@@ -56,7 +56,8 @@ private:
 	_IRQL_requires_max_(APC_LEVEL)
 	bool AllocateInternal(_In_ ALLOCATION_TYPE type, _In_ bool isInit = false);
 	_IRQL_requires_max_(APC_LEVEL)
-	void FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type);
+	bool FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type);
+	UINT64 CountFreeSlots(_In_ ALLOCATION_TYPE type);
 	PVOID FindFreeSlot(_In_ ALLOCATION_TYPE type);
 	void StopThreads();
 
@@ -83,7 +84,9 @@ public:
 	_IRQL_requires_max_(APC_LEVEL)
 	~PoolManager();
 	PVOID Allocate(_In_ ALLOCATION_TYPE type);
-	void Free(_In_ PVOID address, _In_ ALLOCATION_TYPE type);
+	PVOID TryAllocate(_In_ ALLOCATION_TYPE type);
+	bool EnsureFreeSlots(_In_ ALLOCATION_TYPE type, _In_ UINT64 requiredFreeSlots);
+	bool Free(_In_ PVOID address, _In_ ALLOCATION_TYPE type);
 	_IRQL_requires_(PASSIVE_LEVEL)
 	void ProcessAllocation();
 	_IRQL_requires_(PASSIVE_LEVEL)

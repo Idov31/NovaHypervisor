@@ -89,7 +89,8 @@ bool RegistersHandler::HandleCRAccess(_In_ PGUEST_REGS guestRegisters) {
 		}
 		case 3: {
 			__vmx_vmwrite(GUEST_CR3, (registerValue & ~(1ULL << 63)));
-			VmxHelper::InvalidateVpid(VmxHelper::GetVpidTagForProcessor(KeGetCurrentProcessorNumber()));
+			if (!NT_SUCCESS(VmxHelper::InvalidateVpid(VmxHelper::GetVpidTagForProcessor(KeGetCurrentProcessorNumber()))))
+				return false;
 			break;
 		}
 		case 4: {
