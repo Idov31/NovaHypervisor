@@ -10,6 +10,7 @@ constexpr wchar_t KERNEL_NAME[] = L"ntoskrnl.exe";
 constexpr size_t KERNEL_NAME_LEN = 12;
 
 namespace VmxHelper {
+	NTSTATUS VmxInstructionStatusToNtStatus(_In_ UCHAR instructionStatus);
 	void EnableVmxOperation();
 	void DisableVmxOperation();
 	bool IsVmxSupported();

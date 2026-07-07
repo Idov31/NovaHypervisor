@@ -22,6 +22,9 @@ constexpr auto IsSelfVmcall = [](ULONG64 r10, ULONG64 r11, ULONG64 r12) -> bool 
 	return r10 == HYPERVISOR_MAGIC && r11 == VMCALL_MAGIC && r12 == NO_HYPERV_MAGIC;
 };
 
+void LogUnhandledVmExit(_In_ SIZE_T exitReason, _In_ SIZE_T exitQualification);
+bool EmulateXsetbv(_In_ PGUEST_REGS guestRegisters);
+
 extern "C" {
 	void VmResumeFailure();
 	bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState);

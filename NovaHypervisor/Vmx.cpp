@@ -1,17 +1,39 @@
 #include "pch.h"
 #include "Vmx.h"
 
-typedef struct _PROCESSOR_DPC_STATUS_CONTEXT {
-	NTSTATUS* ProcessorStatuses;
-	ULONG ProcessorCount;
-} PROCESSOR_DPC_STATUS_CONTEXT, * PPROCESSOR_DPC_STATUS_CONTEXT;
+/*
+* Description:
+* InitializeDpcProcessorStatuses is responsible for initializing each processor status before a DPC operation starts.
+*
+* Parameters:
+* @processorStatuses [_Out_writes_(processorCount) NTSTATUS*] -- The processor status array to initialize.
+* @processorCount	 [_In_ ULONG]							  -- The number of entries in the status array.
+*
+* Returns:
+* There is no return value.
+*/
+void InitializeDpcProcessorStatuses(
+	_Out_writes_(processorCount) NTSTATUS* processorStatuses, 
+	_In_ ULONG processorCount) {
+	if (!processorStatuses)
+		return;
 
-static void InitializeProcessorStatuses(_Out_writes_(processorCount) NTSTATUS* processorStatuses, _In_ ULONG processorCount) {
 	for (ULONG i = 0; i < processorCount; i++)
 		processorStatuses[i] = STATUS_UNSUCCESSFUL;
 }
 
-static void SetCurrentProcessorStatus(_In_opt_ PVOID context, _In_ NTSTATUS status) {
+/*
+* Description:
+* SetCurrentProcessorStatus is responsible for recording the current processor DPC result.
+*
+* Parameters:
+* @context [_In_opt_ PVOID] -- The PROCESSOR_DPC_STATUS_CONTEXT that owns the status array.
+* @status  [_In_ NTSTATUS]  -- The status to store for the current processor.
+*
+* Returns:
+* There is no return value.
+*/
+void SetCurrentProcessorStatus(_In_opt_ PVOID context, _In_ NTSTATUS status) {
 	PPROCESSOR_DPC_STATUS_CONTEXT statusContext = static_cast<PPROCESSOR_DPC_STATUS_CONTEXT>(context);
 
 	if (!statusContext || !statusContext->ProcessorStatuses)
@@ -22,8 +44,26 @@ static void SetCurrentProcessorStatus(_In_opt_ PVOID context, _In_ NTSTATUS stat
 		statusContext->ProcessorStatuses[currentProcessor] = status;
 }
 
-static bool AreProcessorStatusesSuccessful(_In_reads_(processorCount) NTSTATUS* processorStatuses, _In_ ULONG processorCount, _In_ const char* operationName) {
+/*
+* Description:
+* AreProcessorStatusesSuccessful is responsible for checking whether all processors completed an operation successfully.
+*
+* Parameters:
+* @processorStatuses [_In_reads_(processorCount) NTSTATUS*] -- The status reported by each processor.
+* @processorCount	 [_In_ ULONG]						   -- The number of processor status entries.
+* @operationName	 [_In_ const char*]					   -- The operation name to include in failure logs.
+*
+* Returns:
+* @status			 [bool]								   -- True if all processors succeeded, otherwise false.
+*/
+bool AreProcessorStatusesSuccessful(
+	_In_reads_(processorCount) NTSTATUS* processorStatuses, 
+	_In_ ULONG processorCount, 
+	_In_ const char* operationName) {
 	bool status = true;
+
+	if (!processorStatuses)
+		return false;
 
 	for (ULONG i = 0; i < processorCount; i++) {
 		if (!NT_SUCCESS(processorStatuses[i])) {
@@ -34,7 +74,17 @@ static bool AreProcessorStatusesSuccessful(_In_reads_(processorCount) NTSTATUS* 
 	return status;
 }
 
-static bool HasAnyProcessorVmxState(_In_ ULONG processorCount) {
+/*
+* Description:
+* HasAnyProcessorVmxState is responsible for checking if any logical processor still owns VMX state.
+*
+* Parameters:
+* @processorCount [_In_ ULONG] -- The number of active processors to check.
+*
+* Returns:
+* @status		   [bool]	   -- True if any processor still has VMX state, otherwise false.
+*/
+bool HasAnyProcessorVmxState(_In_ ULONG processorCount) {
 	if (!GuestState)
 		return false;
 
@@ -45,7 +95,17 @@ static bool HasAnyProcessorVmxState(_In_ ULONG processorCount) {
 	return false;
 }
 
-static void FreeProcessorVmResources(_Inout_ VmState* state) {
+/*
+* Description:
+* FreeProcessorVmResources is responsible for freeing per-processor VMX allocations.
+*
+* Parameters:
+* @state [_Inout_ VmState*] -- The VM state whose per-processor resources should be released.
+*
+* Returns:
+* There is no return value.
+*/
+void FreeProcessorVmResources(_Inout_ VmState* state) {
 	if (!state)
 		return;
 
@@ -94,7 +154,7 @@ bool VmxInitialize() {
 		TerminateVmx();
 		return false;
 	}
-	InitializeProcessorStatuses(launchStatuses, processorCount);
+	InitializeDpcProcessorStatuses(launchStatuses, processorCount);
 	PROCESSOR_DPC_STATUS_CONTEXT launchContext = { launchStatuses, processorCount };
 	KeGenericCallDpc(InitializeGuest, &launchContext);
 	bool launched = AreProcessorStatusesSuccessful(launchStatuses, processorCount, "VM launch");
@@ -155,7 +215,7 @@ void TerminateVmx() {
 		NTSTATUS* terminationStatuses = AllocateVirtualMemory<NTSTATUS*>(sizeof(NTSTATUS) * processorCount, false);
 
 		if (terminationStatuses) {
-			InitializeProcessorStatuses(terminationStatuses, processorCount);
+			InitializeDpcProcessorStatuses(terminationStatuses, processorCount);
 			PROCESSOR_DPC_STATUS_CONTEXT terminationContext = { terminationStatuses, processorCount };
 			KeGenericCallDpc(TerminateGuest, &terminationContext);
 			terminated = AreProcessorStatusesSuccessful(terminationStatuses, processorCount, "VMX termination");
@@ -284,7 +344,7 @@ bool VmxInitializer() {
 		GuestState = nullptr;
 		return false;
 	}
-	InitializeProcessorStatuses(allocationStatuses, processorCount);
+	InitializeDpcProcessorStatuses(allocationStatuses, processorCount);
 	PROCESSOR_DPC_STATUS_CONTEXT allocationContext = { allocationStatuses, processorCount };
 
 	// Allocating vmxon, vmcs, vmm stack and msr bitmap for each logical core.

@@ -10,7 +10,23 @@
 #include "VmState.h"
 #include "ComLogger.h"
 
+typedef struct _PROCESSOR_DPC_STATUS_CONTEXT {
+	NTSTATUS* ProcessorStatuses;
+	ULONG ProcessorCount;
+} PROCESSOR_DPC_STATUS_CONTEXT, * PPROCESSOR_DPC_STATUS_CONTEXT;
+
+void InitializeDpcProcessorStatuses(
+	_Out_writes_(processorCount) NTSTATUS* processorStatuses, 
+	_In_ ULONG processorCount);
+void SetCurrentProcessorStatus(_In_opt_ PVOID context, _In_ NTSTATUS status);
+bool AreProcessorStatusesSuccessful(
+	_In_reads_(processorCount) NTSTATUS* processorStatuses,
+	_In_ ULONG processorCount,
+	_In_ const char* operationName);
+bool HasAnyProcessorVmxState(_In_ ULONG processorCount);
+void FreeProcessorVmResources(_Inout_ VmState* state);
 bool VmxInitialize();
+
 _IRQL_requires_max_(APC_LEVEL)
 bool VmxInitializer();
 

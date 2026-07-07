@@ -12,7 +12,7 @@
 * Returns:
 * There is no return value.
 */
-static void LogUnhandledVmExit(_In_ SIZE_T exitReason, _In_ SIZE_T exitQualification) {
+void LogUnhandledVmExit(_In_ SIZE_T exitReason, _In_ SIZE_T exitQualification) {
 	SIZE_T guestRip = 0;
 	SIZE_T guestRsp = 0;
 	SIZE_T guestCr3 = 0;
@@ -42,7 +42,7 @@ static void LogUnhandledVmExit(_In_ SIZE_T exitReason, _In_ SIZE_T exitQualifica
 * Returns:
 * @emulated	   [bool]			   -- True if the XSETBV operation was accepted.
 */
-static bool EmulateXsetbv(_In_ PGUEST_REGS guestRegisters) {
+bool EmulateXsetbv(_In_ PGUEST_REGS guestRegisters) {
 	if (guestRegisters->rcx != 0)
 		return false;
 

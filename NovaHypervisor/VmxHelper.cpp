@@ -2,10 +2,18 @@
 #include "VmxHelper.h"
 #include "GlobalVariables.h"
 
-namespace {
-	NTSTATUS VmxInstructionStatusToNtStatus(_In_ UCHAR instructionStatus) {
-		return instructionStatus == 0 ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
-	}
+/*
+* Description:
+* VmxInstructionStatusToNtStatus is responsible for converting a VMX instruction status to an NTSTATUS value.
+*
+* Parameters:
+* @instructionStatus [_In_ UCHAR] -- The status returned by a VMX instruction helper.
+*
+* Returns:
+* @status			 [NTSTATUS]   -- STATUS_SUCCESS if the VMX instruction succeeded, otherwise STATUS_UNSUCCESSFUL.
+*/
+NTSTATUS VmxHelper::VmxInstructionStatusToNtStatus(_In_ UCHAR instructionStatus) {
+	return instructionStatus == 0 ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
 
 /*
@@ -143,8 +151,8 @@ bool VmxHelper::GetSegmentDescriptor(_Inout_ PSEGMENT_SELECTOR segmentSelector, 
 	PSEGMENT_DESCRIPTOR segDesc = reinterpret_cast<PSEGMENT_DESCRIPTOR>(reinterpret_cast<PUCHAR>(gdtBase) + (selector & ~0x7));
 
 	segmentSelector->SEL = selector;
-	segmentSelector->BASE = segDesc->BASE0 | segDesc->BASE1 << 16 | segDesc->BASE2 << 24;
-	segmentSelector->LIMIT = segDesc->LIMIT0 | (segDesc->LIMIT1ATTR1 & 0xf) << 16;
+	segmentSelector->BASE = static_cast<ULONG64>(segDesc->BASE0 | segDesc->BASE1 << 16 | segDesc->BASE2 << 24);
+	segmentSelector->LIMIT = static_cast<ULONG32>(segDesc->LIMIT0 | (segDesc->LIMIT1ATTR1 & 0xf) << 16);
 	segmentSelector->ATTRIBUTES.UCHARs = segDesc->ATTR0 | (segDesc->LIMIT1ATTR1 & 0xf0) << 4;
 
 	// TSS or callgate, save the base high part.
@@ -182,10 +190,10 @@ bool VmxHelper::FillGuestSelectorData(_In_ PVOID gdtBase, _In_ ULONG segmentRegi
 
 	if (selector == 0)
 		accessRights |= 0x10000;
-	if (!WriteVmcsField(GUEST_ES_SELECTOR + segmentRegister * 2, selector) ||
-		!WriteVmcsField(GUEST_ES_LIMIT + segmentRegister * 2, segmentSelector.LIMIT) ||
-		!WriteVmcsField(GUEST_ES_AR_BYTES + segmentRegister * 2, accessRights) ||
-		!WriteVmcsField(GUEST_ES_BASE + segmentRegister * 2, segmentSelector.BASE))
+	if (!WriteVmcsField(static_cast<ULONG64>(GUEST_ES_SELECTOR + segmentRegister * 2), selector) ||
+		!WriteVmcsField(static_cast<ULONG64>(GUEST_ES_LIMIT + segmentRegister * 2), segmentSelector.LIMIT) ||
+		!WriteVmcsField(static_cast<ULONG64>(GUEST_ES_AR_BYTES + segmentRegister * 2), accessRights) ||
+		!WriteVmcsField(static_cast<ULONG64>(GUEST_ES_BASE + segmentRegister * 2), segmentSelector.BASE))
 		return false;
 	return true;
 }
