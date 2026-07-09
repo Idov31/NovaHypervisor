@@ -22,6 +22,7 @@ namespace VmxHelper {
 	bool GetSegmentDescriptor(_Inout_ PSEGMENT_SELECTOR segmentSelector, _In_ USHORT selector, _In_ PVOID gdtBase);
 	bool FillGuestSelectorData(_In_ PVOID gdtBase, _In_ ULONG segmentRegister, _In_ USHORT selector);
 	bool WriteVmcsField(_In_ SIZE_T field, _In_ SIZE_T value);
+	bool TryWriteOptionalVmcsField(_In_ SIZE_T field, _In_ SIZE_T value, _In_ const char* fieldName);
 	ULONG AdjustControls(_In_ ULONG ctl, _In_ ULONG msr);
 	void InitializeVpidSupport();
 	UINT16 GetVpidTagForProcessor(_In_ ULONG processorIndex);

@@ -34,7 +34,7 @@ private:
 	PVMM_EPT_DYNAMIC_SPLIT GetDynamicSplit(_In_ SIZE_T physicalAddress);
 	UCHAR GetMemoryType(_In_ ULONG64 pfn, _In_ bool isLargePage);
 	bool SplitLargePage(_Inout_ PVOID buffer, _In_ SIZE_T physicalAddress, _In_ bool canCoalesce, _Out_opt_ bool* splitCreated = nullptr);
-	bool TryCoalesceDynamicSplit(_Inout_ PVMM_EPT_DYNAMIC_SPLIT split);
+	bool TryCoalesceDynamicSplit(_Inout_ PVMM_EPT_DYNAMIC_SPLIT split) const;
 	void ClearPendingMtfRestore(_In_ PEPT_HOOKED_PAGE_DETAIL hookedEntry);
 	bool ReleaseHookedPageRecord(_Inout_ PEPT_HOOKED_PAGE_DETAIL hookedEntry);
 	bool IsValidForLargePage(_In_ ULONG64 pfn);

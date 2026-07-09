@@ -213,6 +213,31 @@ bool VmxHelper::WriteVmcsField(_In_ SIZE_T field, _In_ SIZE_T value) {
 
 /*
 * Description:
+* TryWriteOptionalVmcsField is responsible for writing an optional VMCS field and logging failures without aborting setup.
+*
+* Parameters:
+* @field	 [_In_ SIZE_T]	   -- The VMCS field to write.
+* @value	 [_In_ SIZE_T]	   -- The value to write.
+* @fieldName [_In_ const char*] -- The field name for diagnostics.
+*
+* Returns:
+* @status	 [bool]			   -- True if the field was written, otherwise false.
+*/
+bool VmxHelper::TryWriteOptionalVmcsField(_In_ SIZE_T field, _In_ SIZE_T value, _In_ const char* fieldName) {
+	int status = __vmx_vmwrite(field, value);
+
+	if (status) {
+		SIZE_T errorCode = 0;
+		__vmx_vmread(VM_INSTRUCTION_ERROR, &errorCode);
+		NovaHypervisorLog(TRACE_FLAG_INFO, "Optional VMWRITE failed. Field=%s(0x%llx) Value=0x%llx Status=%d Error=0x%llx",
+			fieldName ? fieldName : "unknown", field, value, status, errorCode);
+		return false;
+	}
+	return true;
+}
+
+/*
+* Description:
 * AdjustControls is responsible for adjusting MSR controls.
 *
 * Parameters:

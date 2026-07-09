@@ -159,8 +159,8 @@ void Ept::BuildMtrrMap() {
 	}
 
 	for (UINT64 currentRegister = 0; currentRegister < mtrrCapabilities.VariableRangeCount; currentRegister++) {
-		currentPhyiscalBase.Flags = __readmsr(MSR_IA32_MTRR_PHYSBASE0 + (currentRegister * 2));
-		currentPhysicalMask.Flags = __readmsr(MSR_IA32_MTRR_PHYSMASK0 + (currentRegister * 2));
+		currentPhyiscalBase.Flags = __readmsr(MSR_IA32_MTRR_PHYSBASE0 + static_cast<ULONG>(currentRegister * 2));
+		currentPhysicalMask.Flags = __readmsr(MSR_IA32_MTRR_PHYSMASK0 + static_cast<ULONG>(currentRegister * 2));
 
 		if (currentPhysicalMask.Valid) {
 			descriptor = &this->memoryRanges[this->numberOfEnabledMemoryRanges++];
@@ -329,7 +329,6 @@ bool Ept::SplitLargePage(_Inout_ PVOID buffer, _In_ SIZE_T physicalAddress, _In_
 */
 bool Ept::SetupPML2Entry(_Inout_ PEPT_PML2_ENTRY newEntry, _In_ SIZE_T pageFrameNumber) {
 	newEntry->PageFrameNumber = pageFrameNumber;
-	SIZE_T addressOfPage = pageFrameNumber * SIZE_2_MB;
 
 	if (IsValidForLargePage(pageFrameNumber)) {
 		newEntry->MemoryType = GetMemoryType(pageFrameNumber, true);
@@ -935,7 +934,7 @@ void Ept::ClearPendingMtfRestore(_In_ PEPT_HOOKED_PAGE_DETAIL hookedEntry) {
 	}
 }
 
-bool Ept::TryCoalesceDynamicSplit(_Inout_ PVMM_EPT_DYNAMIC_SPLIT split) {
+bool Ept::TryCoalesceDynamicSplit(_Inout_ PVMM_EPT_DYNAMIC_SPLIT split) const {
 	if (!split || !split->CanCoalesce || split->HookCount != 0)
 		return true;
 

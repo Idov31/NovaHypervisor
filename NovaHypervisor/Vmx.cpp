@@ -485,8 +485,12 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 
 #define VMX_WRITE_OR_FAIL(Field, Value) \
 	do { \
-		if (!VmxHelper::WriteVmcsField((Field), static_cast<SIZE_T>(Value))) \
+		SIZE_T field = static_cast<SIZE_T>(Field); \
+		SIZE_T value = static_cast<SIZE_T>(Value); \
+		if (!VmxHelper::WriteVmcsField(field, value)) { \
+			NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to write VMCS field 0x%llx with value 0x%llx", field, value); \
 			return false; \
+		} \
 	} while (false)
 
 	VMX_WRITE_OR_FAIL(HOST_ES_SELECTOR, AsmGetEs() & 0xF8);
@@ -500,8 +504,8 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	// Setting the link pointer to the required value for 4KB VMCS. 
 	VMX_WRITE_OR_FAIL(VMCS_LINK_POINTER, ~0ULL);
 
-	VMX_WRITE_OR_FAIL(GUEST_IA32_DEBUGCTL, __readmsr(MSR_IA32_DEBUGCTL) & 0xFFFFFFFF);
-	VMX_WRITE_OR_FAIL(GUEST_IA32_DEBUGCTL_HIGH, __readmsr(MSR_IA32_DEBUGCTL) >> 32);
+	UINT64 debugControl = __readmsr(MSR_IA32_DEBUGCTL);
+	VMX_WRITE_OR_FAIL(GUEST_IA32_DEBUGCTL, debugControl);
 
 	/* Time-stamp counter offset */
 	VMX_WRITE_OR_FAIL(TSC_OFFSET, 0);
@@ -606,7 +610,8 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	VMX_WRITE_OR_FAIL(GUEST_INTERRUPTIBILITY_INFO, 0);
 	VMX_WRITE_OR_FAIL(GUEST_ACTIVITY_STATE, 0);
 	VMX_WRITE_OR_FAIL(GUEST_PENDING_DBG_EXCEPTIONS, 0);
-	VMX_WRITE_OR_FAIL(GUEST_SM_BASE, 0);
+	// Hyper-V nested VMX may reject this SMM-related field. Nova does not depend on guest SMM state.
+	VmxHelper::TryWriteOptionalVmcsField(GUEST_SM_BASE, 0, "GUEST_SM_BASE");
 
 	VMX_WRITE_OR_FAIL(GUEST_SYSENTER_CS, __readmsr(MSR_IA32_SYSENTER_CS));
 	VMX_WRITE_OR_FAIL(GUEST_SYSENTER_EIP, __readmsr(MSR_IA32_SYSENTER_EIP));
