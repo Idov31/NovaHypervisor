@@ -1,6 +1,29 @@
 #include "pch.h"
 #include "ComLogger.h"
 
+/*
+* Description:
+* ComLogger initializes a logger that targets the default serial port.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
+ComLogger::ComLogger() noexcept = default;
+
+/*
+* Description:
+* Initialize configures the selected UART for polled serial output.
+*
+* Parameters:
+* @port [_In_ USHORT] -- The UART base port.
+*
+* Returns:
+* There is no return value.
+*/
 _IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::Initialize(_In_ USHORT port) noexcept {
 	port_ = port;
@@ -14,6 +37,17 @@ void ComLogger::Initialize(_In_ USHORT port) noexcept {
 	WriteRegister(ModemControlRegister, 0x0B);
 }
 
+/*
+* Description:
+* Write formats and writes a serial log message.
+*
+* Parameters:
+* @level  [_In_ Level]         -- The message severity.
+* @format [_In_z_ const char*] -- The message format string.
+*
+* Returns:
+* There is no return value.
+*/
 _IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::Write(_In_ Level level, _In_z_ const char* format, ...) noexcept {
 	va_list args;
@@ -22,6 +56,18 @@ void ComLogger::Write(_In_ Level level, _In_z_ const char* format, ...) noexcept
 	va_end(args);
 }
 
+/*
+* Description:
+* VWrite formats and writes a serial log message from a va_list.
+*
+* Parameters:
+* @level  [_In_ Level]         -- The message severity.
+* @format [_In_z_ const char*] -- The message format string.
+* @args   [_In_ va_list]       -- The format arguments.
+*
+* Returns:
+* There is no return value.
+*/
 _IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::VWrite(_In_ Level level, _In_z_ const char* format, _In_ va_list args) noexcept {
 	char message[MessageBufferSize] = { 0 };
@@ -37,16 +83,47 @@ void ComLogger::VWrite(_In_ Level level, _In_z_ const char* format, _In_ va_list
 	ReleaseWriteLock();
 }
 
+/*
+* Description:
+* WriteRegister writes one value to a UART register.
+*
+* Parameters:
+* @offset [_In_ USHORT] -- The register offset from the UART base port.
+* @value  [_In_ UCHAR]  -- The value to write.
+*
+* Returns:
+* There is no return value.
+*/
 _IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::WriteRegister(_In_ USHORT offset, _In_ UCHAR value) const noexcept {
 	__outbyte(static_cast<USHORT>(port_ + offset), value);
 }
 
+/*
+* Description:
+* ReadRegister reads one value from a UART register.
+*
+* Parameters:
+* @offset [_In_ USHORT] -- The register offset from the UART base port.
+*
+* Returns:
+* @value [UCHAR] -- The register value.
+*/
 _IRQL_requires_max_(HIGH_LEVEL)
 UCHAR ComLogger::ReadRegister(_In_ USHORT offset) const noexcept {
 	return __inbyte(static_cast<USHORT>(port_ + offset));
 }
 
+/*
+* Description:
+* WaitUntilTransmitReady polls the UART until its transmitter is ready or the retry limit is reached.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* @ready [bool] -- True if the transmitter became ready, otherwise false.
+*/
 _IRQL_requires_max_(HIGH_LEVEL)
 bool ComLogger::WaitUntilTransmitReady() const noexcept {
 	for (ULONG attempt = 0; attempt < TransmitReadyRetries; ++attempt) {
@@ -57,12 +134,33 @@ bool ComLogger::WaitUntilTransmitReady() const noexcept {
 	return false;
 }
 
+/*
+* Description:
+* WriteChar writes one character to the UART when the transmitter is ready.
+*
+* Parameters:
+* @value [_In_ char] -- The character to write.
+*
+* Returns:
+* There is no return value.
+*/
 _IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::WriteChar(_In_ char value) const noexcept {
 	if (WaitUntilTransmitReady())
 		WriteRegister(0, static_cast<UCHAR>(value));
 }
 
+/*
+* Description:
+* WriteString writes a bounded null-terminated string to the UART.
+*
+* Parameters:
+* @value         [_In_reads_or_z_(maximumLength) const char*] -- The string to write.
+* @maximumLength [_In_ SIZE_T]                                -- The maximum number of characters to inspect.
+*
+* Returns:
+* There is no return value.
+*/
 _IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::WriteString(_In_reads_or_z_(maximumLength) const char* value, _In_ SIZE_T maximumLength) const noexcept {
 	if (!value)
@@ -72,6 +170,16 @@ void ComLogger::WriteString(_In_reads_or_z_(maximumLength) const char* value, _I
 		WriteChar(value[index]);
 }
 
+/*
+* Description:
+* TryAcquireWriteLock attempts to acquire the logger's bounded spin lock.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* @acquired [bool] -- True if the lock was acquired, otherwise false.
+*/
 _IRQL_requires_max_(HIGH_LEVEL)
 bool ComLogger::TryAcquireWriteLock() noexcept {
 	for (ULONG attempt = 0; attempt < WriteLockRetries; ++attempt) {
@@ -84,11 +192,35 @@ bool ComLogger::TryAcquireWriteLock() noexcept {
 	return false;
 }
 
+/*
+* Description:
+* ReleaseWriteLock releases the logger's write lock.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* There is no return value.
+*/
 _IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::ReleaseWriteLock() noexcept {
 	InterlockedExchange(&writeLock_, 0);
 }
 
+/*
+* Description:
+* AppendChar appends one character while preserving null termination.
+*
+* Parameters:
+* @buffer     [_Inout_updates_(bufferSize) char*] -- The destination buffer.
+* @bufferSize [_In_ SIZE_T]                       -- The destination buffer size.
+* @offset     [_Inout_ SIZE_T&]                   -- The current write offset.
+* @value      [_In_ char]                         -- The character to append.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::AppendChar(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize,
 	_Inout_ SIZE_T& offset, _In_ char value) const noexcept {
 	if (!buffer || bufferSize == 0 || offset >= bufferSize - 1)
@@ -98,6 +230,21 @@ void ComLogger::AppendChar(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T
 	buffer[offset] = '\0';
 }
 
+/*
+* Description:
+* AppendString appends a bounded string while preserving null termination.
+*
+* Parameters:
+* @buffer        [_Inout_updates_(bufferSize) char*]          -- The destination buffer.
+* @bufferSize    [_In_ SIZE_T]                                -- The destination buffer size.
+* @offset        [_Inout_ SIZE_T&]                            -- The current write offset.
+* @value         [_In_reads_or_z_(maximumLength) const char*] -- The source string.
+* @maximumLength [_In_ SIZE_T]                                -- The maximum source length.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::AppendString(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize,
 	_Inout_ SIZE_T& offset, _In_reads_or_z_(maximumLength) const char* value,
 	_In_ SIZE_T maximumLength) const noexcept {
@@ -110,6 +257,22 @@ void ComLogger::AppendString(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE
 		AppendChar(buffer, bufferSize, offset, value[index]);
 }
 
+/*
+* Description:
+* AppendUnsigned formats and appends an unsigned integer.
+*
+* Parameters:
+* @buffer     [_Inout_updates_(bufferSize) char*] -- The destination buffer.
+* @bufferSize [_In_ SIZE_T]                       -- The destination buffer size.
+* @offset     [_Inout_ SIZE_T&]                   -- The current write offset.
+* @value      [_In_ UINT64]                       -- The value to format.
+* @radix      [_In_ ULONG]                        -- The numeric radix.
+* @uppercase  [_In_ bool]                         -- Whether hexadecimal digits use uppercase.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::AppendUnsigned(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize,
 	_Inout_ SIZE_T& offset, _In_ UINT64 value, _In_ ULONG radix,
 	_In_ bool uppercase) const noexcept {
@@ -136,6 +299,20 @@ void ComLogger::AppendUnsigned(_Inout_updates_(bufferSize) char* buffer, _In_ SI
 	}
 }
 
+/*
+* Description:
+* AppendSigned formats and appends a signed integer.
+*
+* Parameters:
+* @buffer     [_Inout_updates_(bufferSize) char*] -- The destination buffer.
+* @bufferSize [_In_ SIZE_T]                       -- The destination buffer size.
+* @offset     [_Inout_ SIZE_T&]                   -- The current write offset.
+* @value      [_In_ INT64]                        -- The value to format.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::AppendSigned(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize,
 	_Inout_ SIZE_T& offset, _In_ INT64 value) const noexcept {
 	UINT64 magnitude = static_cast<UINT64>(value);
@@ -148,6 +325,20 @@ void ComLogger::AppendSigned(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE
 	AppendUnsigned(buffer, bufferSize, offset, magnitude, 10, false);
 }
 
+/*
+* Description:
+* FormatMessage formats a bounded serial log message.
+*
+* Parameters:
+* @buffer     [_Out_writes_z_(bufferSize) char*] -- The destination buffer.
+* @bufferSize [_In_ SIZE_T]                      -- The destination buffer size.
+* @format     [_In_z_ const char*]                -- The message format string.
+* @args       [_In_ va_list]                      -- The format arguments.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 void ComLogger::FormatMessage(_Out_writes_z_(bufferSize) char* buffer, _In_ SIZE_T bufferSize,
 	_In_z_ const char* format, _In_ va_list args) const noexcept {
 	SIZE_T offset = 0;
@@ -231,6 +422,17 @@ void ComLogger::FormatMessage(_Out_writes_z_(bufferSize) char* buffer, _In_ SIZE
 	}
 }
 
+/*
+* Description:
+* PrefixForLevel returns the static prefix for a log severity.
+*
+* Parameters:
+* @level [_In_ Level] -- The log severity.
+*
+* Returns:
+* @prefix [const char*] -- The static severity prefix.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 const char* ComLogger::PrefixForLevel(_In_ Level level) const noexcept {
 	switch (level) {
 	case Level::Debug:

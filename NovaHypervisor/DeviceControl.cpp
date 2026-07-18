@@ -124,6 +124,7 @@ NTSTATUS NovaDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp) {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(APC_LEVEL)
 void InitializeIpiProcessorStatuses(
 	_Out_writes_(processorCount) NTSTATUS* processorStatuses,
 	_In_ ULONG processorCount) {
@@ -142,6 +143,7 @@ void InitializeIpiProcessorStatuses(
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_(IPI_LEVEL)
 void RecordIpiProcessorStatus(_Inout_ PIPI_PAGE_OPERATION_CONTEXT context, _In_ NTSTATUS status) {
 	if (!context || !context->ProcessorStatuses)
 		return;
@@ -163,6 +165,7 @@ void RecordIpiProcessorStatus(_Inout_ PIPI_PAGE_OPERATION_CONTEXT context, _In_ 
 * Returns:
 * @status			 [NTSTATUS]							   -- STATUS_SUCCESS if all processors succeeded, otherwise the first failure status.
 */
+_IRQL_requires_max_(APC_LEVEL)
 NTSTATUS AggregateIpiProcessorStatuses(
 	_In_reads_(processorCount) NTSTATUS* processorStatuses,
 	_In_ ULONG processorCount,
@@ -190,6 +193,7 @@ NTSTATUS AggregateIpiProcessorStatuses(
 * Returns:
 * @status  [bool]		  -- True if the page is fully inside the kernel image, otherwise false.
 */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 bool IsKernelImagePage(_In_ UINT64 address) {
 	const UINT64 kernelBase = KernelBaseInfo.KernelBaseAddress;
 	const UINT64 kernelSize = KernelBaseInfo.KernelSize;
@@ -214,6 +218,7 @@ bool IsKernelImagePage(_In_ UINT64 address) {
 * Returns:
 * @status  [ULONG_PTR]	   -- The NTSTATUS result returned as an ULONG_PTR for KeIpiGenericCall.
 */
+_IRQL_requires_(IPI_LEVEL)
 ULONG_PTR HookPageOnProcessor(_In_ ULONG_PTR context) {
 	PIPI_PAGE_OPERATION_CONTEXT operationContext = reinterpret_cast<PIPI_PAGE_OPERATION_CONTEXT>(context);
 	NTSTATUS status = STATUS_INVALID_PARAMETER;
@@ -235,6 +240,7 @@ ULONG_PTR HookPageOnProcessor(_In_ ULONG_PTR context) {
 * Returns:
 * @status  [ULONG_PTR]	   -- The NTSTATUS result returned as an ULONG_PTR for KeIpiGenericCall.
 */
+_IRQL_requires_(IPI_LEVEL)
 ULONG_PTR UnhookPageOnProcessor(_In_ ULONG_PTR context) {
 	PIPI_PAGE_OPERATION_CONTEXT operationContext = reinterpret_cast<PIPI_PAGE_OPERATION_CONTEXT>(context);
 	NTSTATUS status = STATUS_INVALID_PARAMETER;

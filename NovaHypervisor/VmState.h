@@ -35,9 +35,31 @@ public:
 	VmState() = default;
 	~VmState() = default;
 
+	/*
+	* Description:
+	* operator new allocates nonpaged storage for a VM state.
+	*
+	* Parameters:
+	* @size [size_t] -- The number of bytes to allocate.
+	*
+	* Returns:
+	* @address [void*] -- The allocated address, or nullptr on failure.
+	*/
+	_IRQL_requires_max_(APC_LEVEL)
 	void* operator new(size_t size) {
 		return AllocateVirtualMemory<PVOID>(size, false);
 	}
+	/*
+	* Description:
+	* operator delete releases storage previously allocated for a VM state.
+	*
+	* Parameters:
+	* @p [void*] -- The address to release.
+	*
+	* Returns:
+	* There is no return value.
+	*/
+	_IRQL_requires_max_(DISPATCH_LEVEL)
 	void operator delete(void* p) {
 		FreeVirtualMemory(p);
 	}

@@ -81,13 +81,22 @@ typedef struct _EVENT_INFORMATION
 }EVENT_INFORMATION, * PEVENT_INFORMATION;
 
 namespace EventHandler {
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void ClearPendingInjection();
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void SetupInstructionLength();
+	_IRQL_requires_max_(HIGH_LEVEL)
 	bool ReinjectEventFromIdtVectoring();
+	_IRQL_requires_max_(HIGH_LEVEL)
 	bool InjectEventFromVmExitInterruption(_In_ VMEXIT_INTERRUPT_INFO interruptExit);
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void InjectInterruption(_In_ INTERRUPT_TYPE interruptionType, _In_ EXCEPTION_VECTORS vector, _In_ bool deliverErrorCode, _In_ ULONG32 errorCode);
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void InjectBreakpoint();
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void InjectGeneralProtection();
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void InjectUndefinedOpcode();
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void InjectPageFault(_In_ ULONG64 faultAddress, _In_ ULONG32 errorCode);
 };

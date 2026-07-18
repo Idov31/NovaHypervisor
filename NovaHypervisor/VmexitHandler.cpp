@@ -12,6 +12,7 @@
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void LogUnhandledVmExit(_In_ SIZE_T exitReason, _In_ SIZE_T exitQualification) {
 	SIZE_T guestRip = 0;
 	SIZE_T guestRsp = 0;
@@ -42,6 +43,7 @@ void LogUnhandledVmExit(_In_ SIZE_T exitReason, _In_ SIZE_T exitQualification) {
 * Returns:
 * @emulated	   [bool]			   -- True if the XSETBV operation was accepted.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool EmulateXsetbv(_In_ PGUEST_REGS guestRegisters) {
 	if (guestRegisters->rcx != 0)
 		return false;
@@ -108,6 +110,7 @@ bool EmulateXsetbv(_In_ PGUEST_REGS guestRegisters) {
 * Returns:
 * @bool										 -- The function returns true if vmxoff was executed, otherwise false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState) {
 	SIZE_T exitReason = 0;
 	SIZE_T exitQualification = 0;
@@ -274,6 +277,7 @@ bool VmexitHandler(_Inout_ PGUEST_REGS guestRegisters, _In_ UINT64 guestFxState)
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void VmResumeFailure() {
 	SIZE_T errorCode = 0;
 	__vmx_vmread(VM_INSTRUCTION_ERROR, &errorCode);

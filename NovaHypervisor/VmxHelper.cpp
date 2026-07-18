@@ -12,6 +12,7 @@
 * Returns:
 * @status			 [NTSTATUS]   -- STATUS_SUCCESS if the VMX instruction succeeded, otherwise STATUS_UNSUCCESSFUL.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 NTSTATUS VmxHelper::VmxInstructionStatusToNtStatus(_In_ UCHAR instructionStatus) {
 	return instructionStatus == 0 ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
@@ -26,6 +27,7 @@ NTSTATUS VmxHelper::VmxInstructionStatusToNtStatus(_In_ UCHAR instructionStatus)
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void VmxHelper::EnableVmxOperation() {
 	ULONGLONG cr4 = __readcr4();
 	cr4 |= 0x2000;
@@ -42,6 +44,7 @@ void VmxHelper::EnableVmxOperation() {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void VmxHelper::DisableVmxOperation() {
 	ULONGLONG cr4 = __readcr4();
 	cr4 &= ~0x2000;
@@ -58,6 +61,7 @@ void VmxHelper::DisableVmxOperation() {
 * Returns:
 * @supported [bool] -- True if VMX is supported, else false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool VmxHelper::IsVmxSupported() {
 	IA32_FEATURE_CONTROL_MSR control = { 0 };
 	CPUID cpuidResult = { 0 };
@@ -87,6 +91,7 @@ bool VmxHelper::IsVmxSupported() {
 * Returns:
 * @status [bool]			 -- True if the VMCS was cleared, else false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool VmxHelper::ClearVmcsState(_Inout_ VmState* state) {
 	int status = __vmx_vmclear(&state->VmcsRegionPhysical);
 
@@ -107,6 +112,7 @@ bool VmxHelper::ClearVmcsState(_Inout_ VmState* state) {
 * Returns:
 * @status [bool]			 -- True if the VMCS loaded, else false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool VmxHelper::LoadVmcs(_Inout_ VmState* state) {
 	return !__vmx_vmptrld(&state->VmcsRegionPhysical);
 }
@@ -121,6 +127,7 @@ bool VmxHelper::LoadVmcs(_Inout_ VmState* state) {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void VmxHelper::ResumeToNextInstruction() {
 	SIZE_T resumeRip = NULL;
 	SIZE_T currentRip = NULL;
@@ -145,6 +152,7 @@ void VmxHelper::ResumeToNextInstruction() {
 * Returns:
 * @status		   [bool]					   -- True if the segment descriptor was filled, else false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool VmxHelper::GetSegmentDescriptor(_Inout_ PSEGMENT_SELECTOR segmentSelector, _In_ USHORT selector, _In_ PVOID gdtBase) {
 	if (!segmentSelector || selector & 4)
 		return false;
@@ -179,6 +187,7 @@ bool VmxHelper::GetSegmentDescriptor(_Inout_ PSEGMENT_SELECTOR segmentSelector, 
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool VmxHelper::FillGuestSelectorData(_In_ PVOID gdtBase, _In_ ULONG segmentRegister, _In_ USHORT selector) {
 	SEGMENT_SELECTOR segmentSelector = { 0 };
 	ULONG accessRights = 0;
@@ -198,6 +207,18 @@ bool VmxHelper::FillGuestSelectorData(_In_ PVOID gdtBase, _In_ ULONG segmentRegi
 	return true;
 }
 
+/*
+* Description:
+* WriteVmcsField writes one VMCS field and logs VM-instruction failure information.
+*
+* Parameters:
+* @field [_In_ SIZE_T] -- The VMCS field encoding.
+* @value [_In_ SIZE_T] -- The value to write.
+*
+* Returns:
+* @written [bool] -- True if VMWRITE succeeds, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool VmxHelper::WriteVmcsField(_In_ SIZE_T field, _In_ SIZE_T value) {
 	int status = __vmx_vmwrite(field, value);
 
@@ -223,6 +244,7 @@ bool VmxHelper::WriteVmcsField(_In_ SIZE_T field, _In_ SIZE_T value) {
 * Returns:
 * @status	 [bool]			   -- True if the field was written, otherwise false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool VmxHelper::TryWriteOptionalVmcsField(_In_ SIZE_T field, _In_ SIZE_T value, _In_ const char* fieldName) {
 	int status = __vmx_vmwrite(field, value);
 
@@ -247,6 +269,7 @@ bool VmxHelper::TryWriteOptionalVmcsField(_In_ SIZE_T field, _In_ SIZE_T value, 
 * Returns:
 * @ctl	[ULONG]		 -- The adjusted control.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 ULONG VmxHelper::AdjustControls(_In_ ULONG ctl, _In_ ULONG msr) {
 	MSR msrValue = { 0 };
 	msrValue.Content = __readmsr(msr);
@@ -255,6 +278,17 @@ ULONG VmxHelper::AdjustControls(_In_ ULONG ctl, _In_ ULONG msr) {
 	return ctl;
 }
 
+/*
+* Description:
+* IsXstateSaveAreaSupported checks whether the current XSTATE configuration can be preserved safely.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* @supported [bool] -- True if the configured state fits Nova's save area, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool VmxHelper::IsXstateSaveAreaSupported() {
 	if (!(__readcr4() & CR4_OSXSAVE)) {
 		NovaHypervisorLog(TRACE_FLAG_INFO, "CR4.OSXSAVE is not enabled; VM-exit will use FXSAVE/FXRSTOR.");
@@ -298,6 +332,7 @@ bool VmxHelper::IsXstateSaveAreaSupported() {
 * Returns:
 * @isHyperV [bool] -- True if CPUID reports Microsoft Hyper-V as the active hypervisor.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool VmxHelper::IsCurrentHypervisorHyperV() {
 	int processorFeatures[4] = { 0 };
 	__cpuidex(processorFeatures, static_cast<int>(CPUID_PROCESSOR_AND_PROCESSOR_FEATURE_IDENTIFIERS), 0);
@@ -323,6 +358,7 @@ bool VmxHelper::IsCurrentHypervisorHyperV() {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void VmxHelper::InitializeVpidSupport() {
 	MSR secondaryControls = { 0 };
 	IA32_VMX_EPT_VPID_CAP_REGISTER eptVpidCapabilities = { 0 };
@@ -372,6 +408,7 @@ void VmxHelper::InitializeVpidSupport() {
 * Returns:
 * @vpidTag		   [UINT16]	   -- The VPID tag assigned to the logical processor.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 UINT16 VmxHelper::GetVpidTagForProcessor(_In_ ULONG processorIndex) {
 	return static_cast<UINT16>(VPID_TAG_BASE + processorIndex);
 }
@@ -387,6 +424,7 @@ UINT16 VmxHelper::GetVpidTagForProcessor(_In_ ULONG processorIndex) {
 * Returns:
 * @status  [NTSTATUS]		   -- STATUS_SUCCESS if invalidation succeeded or VPID is disabled.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 NTSTATUS VmxHelper::InvalidateVpid(_In_opt_ UINT64 vpid, _In_opt_ UINT64 address) {
 	if (!VpidSupported)
 		return STATUS_SUCCESS;
@@ -422,6 +460,7 @@ NTSTATUS VmxHelper::InvalidateVpid(_In_opt_ UINT64 vpid, _In_opt_ UINT64 address
 * Returns:
 * @status  [NTSTATUS]		   -- STATUS_SUCCESS if invalidation succeeded.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 NTSTATUS VmxHelper::InvalidateEpt(_In_opt_ UINT64 context) {
 	INVEPT_DESC descriptor = { 0 };
 	ULONG inveptType = ALL_CONTEXTS;
@@ -449,7 +488,7 @@ NTSTATUS VmxHelper::InvalidateEpt(_In_opt_ UINT64 context) {
 * Returns:
 * @status  [NTSTATUS]		 -- STATUS_SUCCESS if the operation was successful, else an error code.
 */
-_Use_decl_annotations_
+_IRQL_requires_max_(HIGH_LEVEL)
 NTSTATUS VmxHelper::InvalidateEptByVmcall(_In_opt_ UINT64 context) {
 	return context ? AsmVmxVmcall(VMCALL_INVEPT_SINGLE_CONTEXT, context, NULL, NULL) :
 		AsmVmxVmcall(VMCALL_INVEPT_ALL_CONTEXT, NULL, NULL, NULL);
@@ -465,7 +504,7 @@ NTSTATUS VmxHelper::InvalidateEptByVmcall(_In_opt_ UINT64 context) {
 * Returns:
 * @status  [NTSTATUS]		 -- STATUS_SUCCESS if the operation was successful, else an error code.
 */
-_Use_decl_annotations_
+_IRQL_requires_max_(HIGH_LEVEL)
 NTSTATUS VmxHelper::HookPageByVmcall(_In_opt_ UINT64 context) {
 	if (!context)
 		return STATUS_INVALID_PARAMETER;
@@ -483,7 +522,7 @@ NTSTATUS VmxHelper::HookPageByVmcall(_In_opt_ UINT64 context) {
 * Returns:
 * @status  [NTSTATUS]		 -- STATUS_SUCCESS if the operation was successful, else an error code.
 */
-_Use_decl_annotations_
+_IRQL_requires_max_(HIGH_LEVEL)
 NTSTATUS VmxHelper::UnhookPageByVmcall(_In_opt_ UINT64 context) {
 	if (!context)
 		return STATUS_INVALID_PARAMETER;
@@ -501,6 +540,7 @@ NTSTATUS VmxHelper::UnhookPageByVmcall(_In_opt_ UINT64 context) {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void VmxHelper::RestoreRegisters() {
 	ULONG64 fsBase = 0;
 	ULONG64 gsBase = 0;
@@ -536,6 +576,7 @@ void VmxHelper::RestoreRegisters() {
 * Returns:
 * @status [NTSTATUS] -- STATUS_SUCCESS if the kernel base address was found, else error.
 */
+_IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS VmxHelper::FindKernelBaseAddress() {
 	PKLDR_DATA_TABLE_ENTRY loadedModulesEntry = NULL;
 	NTSTATUS status = STATUS_NOT_FOUND;
@@ -563,6 +604,17 @@ NTSTATUS VmxHelper::FindKernelBaseAddress() {
 	return status;
 }
 
+/*
+* Description:
+* SetMonitorTrapFlag sets or clears the monitor-trap flag in the active VMCS.
+*
+* Parameters:
+* @set [_In_ bool] -- True to enable the flag, false to disable it.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 void VmxHelper::SetMonitorTrapFlag(_In_ bool set) {
 	ULONG64 cpuBasedVmExecControls = 0;
 	__vmx_vmread(CPU_BASED_VM_EXEC_CONTROL, &cpuBasedVmExecControls);

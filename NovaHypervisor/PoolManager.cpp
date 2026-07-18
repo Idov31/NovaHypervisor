@@ -1,6 +1,16 @@
 #include "pch.h"
 #include "PoolManager.h"
 
+/*
+* Description:
+* PoolManager initializes the allocation pools and starts their worker threads.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* There is no return value.
+*/
 _IRQL_requires_max_(APC_LEVEL)
 PoolManager::PoolManager() {
 	OBJECT_ATTRIBUTES objectAttributes{};
@@ -49,7 +59,17 @@ PoolManager::PoolManager() {
 	NovaHypervisorLog(TRACE_FLAG_DEBUG, "Started free thread.");
 }
 
-_IRQL_requires_max_(APC_LEVEL)
+/*
+* Description:
+* ~PoolManager stops the worker threads and releases all managed allocations.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_(PASSIVE_LEVEL)
 PoolManager::~PoolManager() {
 	StopThreads();
 	
@@ -74,6 +94,17 @@ PoolManager::~PoolManager() {
 	FreeAllocations(&eptHookAllocations.Head, eptHookAllocations.Lock);
 }
 
+/*
+* Description:
+* AllocateInternal adds one allocation to the requested pool.
+*
+* Parameters:
+* @type   [_In_ ALLOCATION_TYPE] -- The allocation type to create.
+* @isInit [_In_ bool]            -- Whether the allocation is part of initial setup.
+*
+* Returns:
+* @allocated [bool] -- True if the allocation was created, otherwise false.
+*/
 _IRQL_requires_max_(APC_LEVEL)
 bool PoolManager::AllocateInternal(_In_ ALLOCATION_TYPE type, _In_ bool isInit) {
 	SIZE_T allocationSize = 0;
@@ -116,7 +147,18 @@ bool PoolManager::AllocateInternal(_In_ ALLOCATION_TYPE type, _In_ bool isInit) 
 	return true;
 }
 
-_IRQL_requires_max_(APC_LEVEL)
+/*
+* Description:
+* FreeInternal clears and returns an allocation to its pool.
+*
+* Parameters:
+* @address [_In_ PVOID]           -- The allocation address to return.
+* @type    [_In_ ALLOCATION_TYPE] -- The allocation type.
+*
+* Returns:
+* @freed [bool] -- True if the allocation was returned, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool PoolManager::FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
 	PPOOL_ALLOCATION allocation = nullptr;
 	PLIST_ENTRY head = nullptr;
@@ -160,6 +202,7 @@ bool PoolManager::FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
 * Returns:
 * @slot	   [PVOID]				  -- The reserved allocation, or nullptr when no free slot exists.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 PVOID PoolManager::FindFreeSlot(_In_ ALLOCATION_TYPE type) {
 	PPOOL_ALLOCATION allocation = nullptr;
 	PLIST_ENTRY head = nullptr;
@@ -190,6 +233,17 @@ PVOID PoolManager::FindFreeSlot(_In_ ALLOCATION_TYPE type) {
 	return nullptr;
 }
 
+/*
+* Description:
+* CountFreeSlots counts the unused allocations in the requested pool.
+*
+* Parameters:
+* @type [_In_ ALLOCATION_TYPE] -- The allocation type to count.
+*
+* Returns:
+* @count [UINT64] -- The number of unused allocations.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 UINT64 PoolManager::CountFreeSlots(_In_ ALLOCATION_TYPE type) {
 	PPOOL_ALLOCATION allocation = nullptr;
 	PLIST_ENTRY head = nullptr;
@@ -229,6 +283,7 @@ UINT64 PoolManager::CountFreeSlots(_In_ ALLOCATION_TYPE type) {
 * Returns:
 * @allocation [PVOID]				 -- The allocated memory if allocated else nullptr.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 PVOID PoolManager::Allocate(_In_ ALLOCATION_TYPE type) {
 	bool queued = false;
 	UINT64 waitCount = 0;
@@ -276,12 +331,35 @@ PVOID PoolManager::Allocate(_In_ ALLOCATION_TYPE type) {
 	return allocation;
 }
 
+/*
+* Description:
+* TryAllocate reserves an immediately available allocation without queueing pool growth.
+*
+* Parameters:
+* @type [_In_ ALLOCATION_TYPE] -- The allocation type to reserve.
+*
+* Returns:
+* @allocation [PVOID] -- The reserved allocation, or nullptr if none is available.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 PVOID PoolManager::TryAllocate(_In_ ALLOCATION_TYPE type) {
 	if (!IsValidAllocationType(type))
 		return nullptr;
 	return FindFreeSlot(type);
 }
 
+/*
+* Description:
+* EnsureFreeSlots grows a pool until it contains the requested number of free allocations.
+*
+* Parameters:
+* @type              [_In_ ALLOCATION_TYPE] -- The allocation type to grow.
+* @requiredFreeSlots [_In_ UINT64]          -- The minimum number of free allocations.
+*
+* Returns:
+* @available [bool] -- True if the requested capacity is available, otherwise false.
+*/
+_IRQL_requires_max_(APC_LEVEL)
 bool PoolManager::EnsureFreeSlots(_In_ ALLOCATION_TYPE type, _In_ UINT64 requiredFreeSlots) {
 	if (!IsValidAllocationType(type))
 		return false;
@@ -304,6 +382,7 @@ bool PoolManager::EnsureFreeSlots(_In_ ALLOCATION_TYPE type, _In_ UINT64 require
 * Returns:
 * @status [bool]				  -- True if the allocation was returned to the pool.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool PoolManager::Free(_In_ PVOID address, _In_ ALLOCATION_TYPE type) {
 	if (!address || !IsValidAllocationType(type))
 		return false;
@@ -398,6 +477,7 @@ void PoolManager::ProcessFree() {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_(PASSIVE_LEVEL)
 void PoolManager::StopThreads() {
 	auto StopThread = [](HANDLE thread) -> void {
 		NTSTATUS status = STATUS_SUCCESS;

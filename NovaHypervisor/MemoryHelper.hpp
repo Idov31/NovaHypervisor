@@ -16,6 +16,7 @@
 * Returns:
 * @physicalAddress [UINT64]		 -- Physical address.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 inline UINT64 GetPhysicalAddress(_In_ UINT64 virtualAddress) {
 	PHYSICAL_ADDRESS physicalAddress = MmGetPhysicalAddress(reinterpret_cast<PVOID>(virtualAddress));
 	return static_cast<UINT64>(physicalAddress.QuadPart);
@@ -31,6 +32,7 @@ inline UINT64 GetPhysicalAddress(_In_ UINT64 virtualAddress) {
 * Returns:
 * @virtualAddress	[UINT64]	  -- Virtual address.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 inline UINT64 GetVirtualAddress(_In_ UINT64 physicalAddress) {
 	PHYSICAL_ADDRESS physicalAddr = { 0 };
 	physicalAddr.QuadPart = physicalAddress;
@@ -48,6 +50,7 @@ inline UINT64 GetVirtualAddress(_In_ UINT64 physicalAddress) {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 inline void FreeVirtualMemory(_In_ PVOID address) {
 	if (!address)
 		return;
@@ -68,6 +71,8 @@ inline void FreeVirtualMemory(_In_ PVOID address) {
 * @ptr					[PointerType] -- Allocated pointer on success else NULL.
 */
 template <typename PointerType>
+_When_(paged, _IRQL_requires_max_(APC_LEVEL))
+_When_(!paged, _IRQL_requires_max_(DISPATCH_LEVEL))
 inline PointerType AllocateVirtualMemory(size_t size, bool paged = true, bool forceDeprecatedAlloc = false) {
 	PVOID allocatedMem = NULL;
 
@@ -101,6 +106,7 @@ inline PointerType AllocateVirtualMemory(size_t size, bool paged = true, bool fo
 * Returns:
 * @status	   [NTSTATUS] -- NTSUCCESS if succeeded else failure code.
 */
+_IRQL_requires_(PASSIVE_LEVEL)
 inline NTSTATUS ProbeAddress(PVOID address, SIZE_T len, ULONG alignment, NTSTATUS failureCode) {
 	NTSTATUS status = STATUS_SUCCESS;
 

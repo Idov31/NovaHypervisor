@@ -23,15 +23,22 @@ typedef struct _IPI_PAGE_OPERATION_CONTEXT {
 	ULONG ProcessorCount;
 } IPI_PAGE_OPERATION_CONTEXT, * PIPI_PAGE_OPERATION_CONTEXT;
 
+_IRQL_requires_max_(APC_LEVEL)
 void InitializeIpiProcessorStatuses(
 	_Out_writes_(processorCount) NTSTATUS* processorStatuses, 
 	_In_ ULONG processorCount);
+_IRQL_requires_(IPI_LEVEL)
 void RecordIpiProcessorStatus(_Inout_ PIPI_PAGE_OPERATION_CONTEXT context, _In_ NTSTATUS status);
+_IRQL_requires_max_(APC_LEVEL)
 NTSTATUS AggregateIpiProcessorStatuses(
 	_In_reads_(processorCount) NTSTATUS* processorStatuses,
 	_In_ ULONG processorCount,
 	_In_ const char* operationName);
+_IRQL_requires_max_(DISPATCH_LEVEL)
 bool IsKernelImagePage(_In_ UINT64 address);
+_IRQL_requires_(IPI_LEVEL)
 ULONG_PTR HookPageOnProcessor(_In_ ULONG_PTR context);
+_IRQL_requires_(IPI_LEVEL)
 ULONG_PTR UnhookPageOnProcessor(_In_ ULONG_PTR context);
+
 DRIVER_DISPATCH NovaDeviceControl;

@@ -14,6 +14,7 @@
 * Returns:
 * @status		  [NTSTATUS]		-- The function returns the status of the operation.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 NTSTATUS VmcallHandler(_In_ UINT64 vmcallNumber, _In_opt_ UINT64 optionalParam1, _In_opt_ UINT64 optionalParam2, _In_opt_ UINT64 optionalParam3) {
 	NTSTATUS status = STATUS_SUCCESS;
 	ULONG currentProcessorIndex = KeGetCurrentProcessorNumber();
@@ -79,6 +80,7 @@ NTSTATUS VmcallHandler(_In_ UINT64 vmcallNumber, _In_opt_ UINT64 optionalParam1,
 * Returns:
 * @status	   [bool]				 -- True if the hypercall was forwarded.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool HypercallHandler(_In_ Ept* eptInstance, _Inout_ PGUEST_REGS registers, _In_ UINT64 guestFxState) {
 	if (!eptInstance || !registers)
 		return false;

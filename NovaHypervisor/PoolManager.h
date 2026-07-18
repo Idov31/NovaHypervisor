@@ -55,37 +55,88 @@ private:
 
 	_IRQL_requires_max_(APC_LEVEL)
 	bool AllocateInternal(_In_ ALLOCATION_TYPE type, _In_ bool isInit = false);
-	_IRQL_requires_max_(APC_LEVEL)
+	_IRQL_requires_max_(HIGH_LEVEL)
 	bool FreeInternal(_In_ PVOID address, _In_ ALLOCATION_TYPE type);
+	_IRQL_requires_max_(HIGH_LEVEL)
 	UINT64 CountFreeSlots(_In_ ALLOCATION_TYPE type);
+	_IRQL_requires_max_(HIGH_LEVEL)
 	PVOID FindFreeSlot(_In_ ALLOCATION_TYPE type);
+	_IRQL_requires_(PASSIVE_LEVEL)
 	void StopThreads();
 
+	/*
+	* Description:
+	* IsValidAllocationType checks whether an allocation type is managed by the pool.
+	*
+	* Parameters:
+	* @type [_In_ ALLOCATION_TYPE] -- The allocation type to validate.
+	*
+	* Returns:
+	* @valid [bool] -- True if the allocation type is valid, otherwise false.
+	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	bool IsValidAllocationType(_In_ ALLOCATION_TYPE type) const {
 		return type == SPLIT_2MB_PAGING_TO_4KB_PAGE || type == EPT_HOOK_PAGE;
 	}
 
+	/*
+	* Description:
+	* Sleep delays the current pool worker thread for the requested interval.
+	*
+	* Parameters:
+	* @milliseconds [_In_ UINT64] -- The delay duration in milliseconds.
+	*
+	* Returns:
+	* There is no return value.
+	*/
+	_IRQL_requires_(PASSIVE_LEVEL)
 	void Sleep(_In_ UINT64 milliseconds) const {
 		LARGE_INTEGER interval = { 0 };
 		interval.QuadPart = -10000 * milliseconds;
 		KeDelayExecutionThread(KernelMode, FALSE, &interval);
 	}
 public:
+	/*
+	* Description:
+	* operator new allocates nonpaged storage for a pool manager.
+	*
+	* Parameters:
+	* @size [size_t] -- The number of bytes to allocate.
+	*
+	* Returns:
+	* @address [void*] -- The allocated address, or nullptr on failure.
+	*/
+	_IRQL_requires_max_(APC_LEVEL)
 	void* operator new(size_t size) {
 		return AllocateVirtualMemory<PVOID>(size, false);
 	}
 
+	/*
+	* Description:
+	* operator delete releases storage previously allocated for a pool manager.
+	*
+	* Parameters:
+	* @p [void*] -- The address to release.
+	*
+	* Returns:
+	* There is no return value.
+	*/
+	_IRQL_requires_max_(APC_LEVEL)
 	void operator delete(void* p) {
 		FreeVirtualMemory(p);
 	}
 
 	_IRQL_requires_max_(APC_LEVEL)
 	PoolManager();
-	_IRQL_requires_max_(APC_LEVEL)
+	_IRQL_requires_(PASSIVE_LEVEL)
 	~PoolManager();
+	_IRQL_requires_max_(HIGH_LEVEL)
 	PVOID Allocate(_In_ ALLOCATION_TYPE type);
+	_IRQL_requires_max_(HIGH_LEVEL)
 	PVOID TryAllocate(_In_ ALLOCATION_TYPE type);
+	_IRQL_requires_max_(APC_LEVEL)
 	bool EnsureFreeSlots(_In_ ALLOCATION_TYPE type, _In_ UINT64 requiredFreeSlots);
+	_IRQL_requires_max_(HIGH_LEVEL)
 	bool Free(_In_ PVOID address, _In_ ALLOCATION_TYPE type);
 	_IRQL_requires_(PASSIVE_LEVEL)
 	void ProcessAllocation();

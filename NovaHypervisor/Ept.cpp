@@ -2,6 +2,17 @@
 #include "Ept.h"
 #include "EventInjection.h"
 
+/*
+* Description:
+* Ept initializes an identity-mapped EPT context for one logical processor.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(APC_LEVEL)
 Ept::Ept() {
 	eptPointer = { 0 };
 	numberOfEnabledMemoryRanges = 0;
@@ -32,6 +43,17 @@ Ept::Ept() {
 	}
 }
 
+/*
+* Description:
+* ~Ept removes all hooks and releases the EPT context resources.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(APC_LEVEL)
 Ept::~Ept() {
 	UnhookAllPages();
 	FreeVirtualMemory(hookedPages);
@@ -52,6 +74,7 @@ Ept::~Ept() {
 * Returns:
 * @flags [ULONG64] -- EPT pointer flags.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 ULONG64 Ept::GetEptPointerFlags() const {
 	return eptPointer.Flags;
 }
@@ -66,6 +89,7 @@ ULONG64 Ept::GetEptPointerFlags() const {
 * Returns:
 * @supported [bool] -- True if all the critical EPT features are supported, otherwise false.
 */
+_IRQL_requires_max_(APC_LEVEL)
 bool Ept::CheckFeatures() {
 	IA32_VMX_EPT_VPID_CAP_REGISTER vpidRegister = { 0 };
 	IA32_MTRR_DEF_TYPE_REGISTER mtrrDefType = { 0 };
@@ -101,6 +125,7 @@ bool Ept::CheckFeatures() {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(APC_LEVEL)
 void Ept::BuildMtrrMap() {
 	IA32_MTRR_CAPABILITIES_REGISTER mtrrCapabilities = { 0 };
 	IA32_MTRR_PHYSBASE_REGISTER currentPhyiscalBase = { 0 };
@@ -189,6 +214,7 @@ void Ept::BuildMtrrMap() {
 * Returns:
 * @pml1			   [PEPT_PML1_ENTRY]			 -- The PML1 entry.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 PEPT_PML1_ENTRY Ept::GetPml1Entry(_In_ SIZE_T physicalAddress) {
 	SIZE_T directory = ADDRMASK_EPT_PML2_INDEX(physicalAddress);
 	SIZE_T directoryPointer = ADDRMASK_EPT_PML3_INDEX(physicalAddress);
@@ -218,6 +244,7 @@ PEPT_PML1_ENTRY Ept::GetPml1Entry(_In_ SIZE_T physicalAddress) {
 * Returns:
 * @pml2			   [PEPT_PML2_ENTRY]			 -- The PML2 entry.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 PEPT_PML2_ENTRY Ept::GetPml2Entry(_In_ SIZE_T physicalAddress) {
 	SIZE_T directory = ADDRMASK_EPT_PML2_INDEX(physicalAddress);
 	SIZE_T directoryPointer = ADDRMASK_EPT_PML3_INDEX(physicalAddress);
@@ -229,6 +256,17 @@ PEPT_PML2_ENTRY Ept::GetPml2Entry(_In_ SIZE_T physicalAddress) {
 	return &eptPageTable->PML2[directoryPointer][directory];
 }
 
+/*
+* Description:
+* GetDynamicSplit returns the dynamic EPT split that maps a physical address.
+*
+* Parameters:
+* @physicalAddress [_In_ SIZE_T] -- The physical address to locate.
+*
+* Returns:
+* @split [PVMM_EPT_DYNAMIC_SPLIT] -- The matching split, or nullptr if none exists.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 PVMM_EPT_DYNAMIC_SPLIT Ept::GetDynamicSplit(_In_ SIZE_T physicalAddress) {
 	PEPT_PML2_ENTRY pml2Entry = GetPml2Entry(physicalAddress);
 
@@ -251,6 +289,7 @@ PVMM_EPT_DYNAMIC_SPLIT Ept::GetDynamicSplit(_In_ SIZE_T physicalAddress) {
 * Returns:
 * @status		   [bool]						 -- True if splitted else false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::SplitLargePage(_Inout_ PVOID buffer, _In_ SIZE_T physicalAddress, _In_ bool canCoalesce, _Out_opt_ bool* splitCreated) {
 
 	EPT_PML1_ENTRY pml1Template = { 0 };
@@ -327,6 +366,7 @@ bool Ept::SplitLargePage(_Inout_ PVOID buffer, _In_ SIZE_T physicalAddress, _In_
 * Returns:
 * @status		   [bool]					-- True if the entry is set up successfully, otherwise false.
 */
+_IRQL_requires_max_(APC_LEVEL)
 bool Ept::SetupPML2Entry(_Inout_ PEPT_PML2_ENTRY newEntry, _In_ SIZE_T pageFrameNumber) {
 	newEntry->PageFrameNumber = pageFrameNumber;
 
@@ -356,6 +396,7 @@ bool Ept::SetupPML2Entry(_Inout_ PEPT_PML2_ENTRY newEntry, _In_ SIZE_T pageFrame
 * Returns:
 * @pageTable [PVMM_EPT_PAGE_TABLE] -- The allocated page table.
 */
+_IRQL_requires_max_(APC_LEVEL)
 PVMM_EPT_PAGE_TABLE Ept::AllocateAndCreateIdentityPageTable() {
 	PHYSICAL_ADDRESS maxPhysicalAddress = { 0 };
 	EPT_PML3_POINTER pml3Template = { 0 };
@@ -418,6 +459,7 @@ PVMM_EPT_PAGE_TABLE Ept::AllocateAndCreateIdentityPageTable() {
 * Returns:
 * @status [bool] -- True if the EPT is initialized, otherwise false.
 */
+_IRQL_requires_max_(APC_LEVEL)
 bool Ept::LogicalProcessorInitialize() {
 	EPTP eptp = { 0 };
 	PVMM_EPT_PAGE_TABLE pageTable = AllocateAndCreateIdentityPageTable();
@@ -452,7 +494,7 @@ bool Ept::LogicalProcessorInitialize() {
 * Returns:
 * @status				  [bool]									  -- True if the page hook exit is handled, otherwise false.
 */
-_Use_decl_annotations_
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::HandlePageHookExit(_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification,
 	_In_ UINT64 guestPhysicalAddr,
 	_In_ ULONG64 guestLinearAddress,
@@ -505,6 +547,7 @@ bool Ept::HandlePageHookExit(_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violation
 * Returns:
 * @status				  [bool]									  -- True if the page is handled, otherwise false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::HandleHookedPage(_Inout_ EPT_HOOKED_PAGE_DETAIL* hookedEntryDetails,
 	_In_ VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification,
 	_In_ ULONG64 guestLinearAddress,
@@ -578,6 +621,7 @@ bool Ept::HandleHookedPage(_Inout_ EPT_HOOKED_PAGE_DETAIL* hookedEntryDetails,
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void Ept::HandleEptViolation(_In_ ULONG64 exitQualification, _In_ ULONG64 guestPhysicalAddr) {
 	VMX_EXIT_QUALIFICATION_EPT_VIOLATION violationQualification = { 0 };
 	violationQualification.Flags = exitQualification;
@@ -604,6 +648,7 @@ void Ept::HandleEptViolation(_In_ ULONG64 exitQualification, _In_ ULONG64 guestP
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void Ept::HandleMisconfiguration(_In_ UINT64 guestAddress) {
 	NovaHypervisorLog(TRACE_FLAG_ERROR, "EPT Misconfiguration!");
 	NovaHypervisorLog(TRACE_FLAG_ERROR, "A field in the EPT paging structure was invalid, faulting guest address: 0x%llx", guestAddress);
@@ -620,6 +665,7 @@ void Ept::HandleMisconfiguration(_In_ UINT64 guestAddress) {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void Ept::HandleMonitorTrapFlag(_Inout_ PEPT_MTF_RESTORE_CONTEXT restoreContext) {
 	if (!restoreContext || !restoreContext->Active || !restoreContext->EntryAddress)
 		return;
@@ -630,6 +676,17 @@ void Ept::HandleMonitorTrapFlag(_Inout_ PEPT_MTF_RESTORE_CONTEXT restoreContext)
 		NovaHypervisorLog(TRACE_FLAG_ERROR, "Failed to restore hooked page 0x%llx after MTF", restoreContext->VirtualAddress);
 }
 
+/*
+* Description:
+* IsAccessFromKernelImage checks whether a guest instruction pointer belongs to the kernel image.
+*
+* Parameters:
+* @guestRip [_In_ UINT64] -- The guest instruction pointer to check.
+*
+* Returns:
+* @fromKernel [bool] -- True if the instruction pointer is inside the kernel image, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::IsAccessFromKernelImage(_In_ UINT64 guestRip) const {
 	const UINT64 kernelBase = KernelBaseInfo.KernelBaseAddress;
 	const UINT64 kernelSize = KernelBaseInfo.KernelSize;
@@ -654,6 +711,7 @@ bool Ept::IsAccessFromKernelImage(_In_ UINT64 guestRip) const {
 * Returns:
 * @status		[bool]	     -- True if the page is hooked, otherwise false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::RootModePageHook(_In_ PVOID targetFunc, _In_ UINT8 permissions) {
 	EPT_PML1_ENTRY changedEntry = { 0 };
 	ULONG currentProcessorIndex = KeGetCurrentProcessorIndex();
@@ -778,6 +836,7 @@ bool Ept::RootModePageHook(_In_ PVOID targetFunc, _In_ UINT8 permissions) {
 * Returns:
 * @targetMemoryType [UCHAR]		   -- The memory type.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 UCHAR Ept::GetMemoryType(_In_ ULONG64 pfn, _In_ bool isLargePage) {
 	UCHAR targetMemoryType = 0xFF;
 	MTRR_RANGE_DESCRIPTOR* currentMemoryRange;
@@ -831,6 +890,7 @@ UCHAR Ept::GetMemoryType(_In_ ULONG64 pfn, _In_ bool isLargePage) {
 * Returns:
 * @entry		   [PVOID]					  -- The PML1 or PML2 entry.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 PVOID Ept::GetPml1OrPml2Entry(_In_ SIZE_T physicalAddress, _Inout_ bool* isLargePage) {
 	SIZE_T directory = ADDRMASK_EPT_PML2_INDEX(physicalAddress);
 	SIZE_T directoryPointer = ADDRMASK_EPT_PML3_INDEX(physicalAddress);
@@ -865,6 +925,7 @@ PVOID Ept::GetPml1OrPml2Entry(_In_ SIZE_T physicalAddress, _Inout_ bool* isLarge
 * Returns:
 * @status [bool]		 -- True if the page is valid for a large page, otherwise false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::IsValidForLargePage(_In_ ULONG64 pfn) {
 	ULONG64 startPageAddress = pfn * SIZE_2_MB;
 	ULONG64 endPageAddress = startPageAddress + SIZE_2_MB - 1;
@@ -892,7 +953,7 @@ bool Ept::IsValidForLargePage(_In_ ULONG64 pfn) {
 * Returns:
 * @status		    [bool]				  -- True if the entry and invalidation succeeded.
 */
-_Use_decl_annotations_
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::SetPML1AndInvalidateTLB(_Inout_ PEPT_PML1_ENTRY pml1Entry, _In_ EPT_PML1_ENTRY pml1Value, _In_ INVEPT_TYPE invalidationType) {
 	if (!pml1Entry)
 		return false;
@@ -912,6 +973,17 @@ bool Ept::SetPML1AndInvalidateTLB(_Inout_ PEPT_PML1_ENTRY pml1Entry, _In_ EPT_PM
 	return NT_SUCCESS(status);
 }
 
+/*
+* Description:
+* ClearPendingMtfRestore clears monitor-trap restoration state associated with a hook record.
+*
+* Parameters:
+* @hookedEntry [_In_ PEPT_HOOKED_PAGE_DETAIL] -- The hook record being removed.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 void Ept::ClearPendingMtfRestore(_In_ PEPT_HOOKED_PAGE_DETAIL hookedEntry) {
 	if (!hookedEntry || !GuestState)
 		return;
@@ -934,7 +1006,18 @@ void Ept::ClearPendingMtfRestore(_In_ PEPT_HOOKED_PAGE_DETAIL hookedEntry) {
 	}
 }
 
-bool Ept::TryCoalesceDynamicSplit(_Inout_ PVMM_EPT_DYNAMIC_SPLIT split) const {
+/*
+* Description:
+* TryCoalesceDynamicSplit restores a large-page entry when its dynamic split has no remaining hooks.
+*
+* Parameters:
+* @split [_Inout_opt_ PVMM_EPT_DYNAMIC_SPLIT] -- The dynamic split to coalesce.
+*
+* Returns:
+* @coalesced [bool] -- True if the split was unused or successfully coalesced, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
+bool Ept::TryCoalesceDynamicSplit(_Inout_opt_ PVMM_EPT_DYNAMIC_SPLIT split) const {
 	if (!split || !split->CanCoalesce || split->HookCount != 0)
 		return true;
 
@@ -962,6 +1045,17 @@ bool Ept::TryCoalesceDynamicSplit(_Inout_ PVMM_EPT_DYNAMIC_SPLIT split) const {
 	return poolManager->Free(split, SPLIT_2MB_PAGING_TO_4KB_PAGE);
 }
 
+/*
+* Description:
+* ReleaseHookedPageRecord restores a hooked mapping and returns its tracking record to the pool.
+*
+* Parameters:
+* @hookedEntry [_Inout_ PEPT_HOOKED_PAGE_DETAIL] -- The hook record to release.
+*
+* Returns:
+* @released [bool] -- True if the mapping and record were released, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::ReleaseHookedPageRecord(_Inout_ PEPT_HOOKED_PAGE_DETAIL hookedEntry) {
 	if (!hookedEntry)
 		return false;
@@ -999,6 +1093,7 @@ bool Ept::ReleaseHookedPageRecord(_Inout_ PEPT_HOOKED_PAGE_DETAIL hookedEntry) {
 * Returns:
 * @status			    [bool]		  -- True if the page is unhooked, otherwise false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::PageUnhookVmcall(_In_ UINT64 guestVirtualAddress) {
 	if (!GuestState[KeGetCurrentProcessorNumber()].IsOnVmxRoot)
 		return false;
@@ -1031,6 +1126,7 @@ bool Ept::PageUnhookVmcall(_In_ UINT64 guestVirtualAddress) {
 * Returns:
 * @status [bool] -- True if unhooked all pages, else false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::UnhookAllPagesVmcall() {
 	PEPT_HOOKED_PAGE_DETAIL hookedEntry = nullptr;
 	bool status = true;
@@ -1065,6 +1161,7 @@ bool Ept::UnhookAllPagesVmcall() {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(APC_LEVEL)
 void Ept::UnhookAllPages() {
 	if (GuestState[KeGetCurrentProcessorNumber()].IsOnVmxRoot)
 		return;
@@ -1086,6 +1183,7 @@ void Ept::UnhookAllPages() {
 * Returns:
 * @status [bool] -- True if a hook exists, otherwise false.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 bool Ept::IsHookExists(_In_ UINT64 guestVirtualAddress) {
 	return GetHookedPage(reinterpret_cast<UINT64>(PAGE_ALIGN(guestVirtualAddress))) != NULL;
 }
@@ -1100,6 +1198,7 @@ bool Ept::IsHookExists(_In_ UINT64 guestVirtualAddress) {
 * Returns:
 * @hookedPage [PEPT_HOOKED_PAGE_DETAIL] -- The details of the hooked page, or NULL if not found.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 PEPT_HOOKED_PAGE_DETAIL Ept::GetHookedPage(_In_ UINT64 guestVirtualAddress) {
 	PEPT_HOOKED_PAGE_DETAIL hookedEntry = nullptr;
 	UINT64 alignedGuestVirtualAddress = reinterpret_cast<UINT64>(PAGE_ALIGN(guestVirtualAddress));
@@ -1125,6 +1224,17 @@ PEPT_HOOKED_PAGE_DETAIL Ept::GetHookedPage(_In_ UINT64 guestVirtualAddress) {
 	return NULL;
 }
 
+/*
+* Description:
+* ReleaseAllHookedPageRecords releases every hook record owned by this EPT context.
+*
+* Parameters:
+* There are no parameters.
+*
+* Returns:
+* There is no return value.
+*/
+_IRQL_requires_max_(APC_LEVEL)
 void Ept::ReleaseAllHookedPageRecords() {
 	PEPT_HOOKED_PAGE_DETAIL hookedEntry = nullptr;
 	bool status = true;

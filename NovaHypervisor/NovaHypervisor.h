@@ -9,6 +9,8 @@
 constexpr wchar_t DEVICE_NAME[] = L"\\Device\\NovaHypervisor";
 constexpr wchar_t SYMBOLIC_LINK[] = L"\\??\\NovaHypervisor";
 
-NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING RegistryPath);
+DRIVER_INITIALIZE DriverEntry;
+
 DRIVER_UNLOAD NovaUnload;
-DRIVER_DISPATCH NovaCreateClose;
+
+PDRIVER_DISPATCH NovaCreateClose;

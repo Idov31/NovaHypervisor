@@ -12,6 +12,7 @@
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(APC_LEVEL)
 void InitializeDpcProcessorStatuses(
 	_Out_writes_(processorCount) NTSTATUS* processorStatuses, 
 	_In_ ULONG processorCount) {
@@ -33,6 +34,7 @@ void InitializeDpcProcessorStatuses(
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_(DISPATCH_LEVEL)
 void SetCurrentProcessorStatus(_In_opt_ PVOID context, _In_ NTSTATUS status) {
 	PPROCESSOR_DPC_STATUS_CONTEXT statusContext = static_cast<PPROCESSOR_DPC_STATUS_CONTEXT>(context);
 
@@ -56,6 +58,7 @@ void SetCurrentProcessorStatus(_In_opt_ PVOID context, _In_ NTSTATUS status) {
 * Returns:
 * @status			 [bool]								   -- True if all processors succeeded, otherwise false.
 */
+_IRQL_requires_max_(APC_LEVEL)
 bool AreProcessorStatusesSuccessful(
 	_In_reads_(processorCount) NTSTATUS* processorStatuses, 
 	_In_ ULONG processorCount, 
@@ -84,6 +87,7 @@ bool AreProcessorStatusesSuccessful(
 * Returns:
 * @status		   [bool]	   -- True if any processor still has VMX state, otherwise false.
 */
+_IRQL_requires_max_(APC_LEVEL)
 bool HasAnyProcessorVmxState(_In_ ULONG processorCount) {
 	if (!GuestState)
 		return false;
@@ -105,6 +109,7 @@ bool HasAnyProcessorVmxState(_In_ ULONG processorCount) {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 void FreeProcessorVmResources(_Inout_ VmState* state) {
 	if (!state)
 		return;
@@ -143,6 +148,7 @@ void FreeProcessorVmResources(_Inout_ VmState* state) {
 * Returns:
 * @status [bool] -- True if VMX was initialized, else false.
 */
+_IRQL_requires_max_(APC_LEVEL)
 bool VmxInitialize() {
 	if (!VmxInitializer())
 		return false;
@@ -183,6 +189,7 @@ bool VmxInitialize() {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_(DISPATCH_LEVEL)
 void InitializeGuest(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVOID systemArgument1, _In_opt_ PVOID systemArgument2) {
 	UNREFERENCED_PARAMETER(dpc);
 
@@ -207,6 +214,7 @@ void InitializeGuest(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PV
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(APC_LEVEL)
 void TerminateVmx() {
 	ULONG processorCount = KeQueryActiveProcessorCount(0);
 	bool terminated = true;
@@ -256,6 +264,7 @@ void TerminateVmx() {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_(DISPATCH_LEVEL)
 void TerminateGuest(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVOID systemArgument1, _In_opt_ PVOID systemArgument2) {
 	UNREFERENCED_PARAMETER(dpc);
 	NTSTATUS status = VmxTerminate() ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
@@ -368,6 +377,7 @@ bool VmxInitializer() {
 * Returns:
 * @status	  [bool]	   -- Returns only false if the VM didn't launch.
 */
+_IRQL_requires_(DISPATCH_LEVEL)
 bool VirtualizeProcessor(_In_ PVOID guestStack) {
 	bool success = true;
 	bool vmcsLoaded = false;
@@ -429,6 +439,7 @@ bool VirtualizeProcessor(_In_ PVOID guestStack) {
 * Returns:
 * @status [bool] -- True if the VMX was terminated, else false.
 */
+_IRQL_requires_(DISPATCH_LEVEL)
 bool VmxTerminate() {
 	NTSTATUS status = STATUS_SUCCESS;
 	ULONG currentProcessorIndex = KeGetCurrentProcessorNumber();
@@ -475,6 +486,7 @@ bool VmxTerminate() {
 * Returns:
 * @status	  [bool]						-- True if the VM was launched, else false.
 */
+_IRQL_requires_(DISPATCH_LEVEL)
 bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 	SEGMENT_SELECTOR segmentSelector = { 0 };
 	IA32_VMX_BASIC_MSR vmxBasicMsr = { 0 };
@@ -660,6 +672,7 @@ bool SetupVmcs(_Inout_ VmState* state, _In_ PVOID guestStack) {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 void VmxVmxoff() {
 	ULONG currentProcessorIndex = KeGetCurrentProcessorNumber();
 
@@ -710,6 +723,7 @@ void VmxVmxoff() {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_(DISPATCH_LEVEL)
 void AllocateVmStructures(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVOID systemArgument1, _In_opt_ PVOID systemArgument2) {
 	UNREFERENCED_PARAMETER(dpc);
 
@@ -793,6 +807,7 @@ void AllocateVmStructures(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_op
 * Returns:
 * @allocated  [bool]			 -- Returns true if allocated, else false.
 */
+_IRQL_requires_(DISPATCH_LEVEL)
 bool AllocateRegion(_In_ RegionType regionType, _Inout_ VmState* state) {
 	int status = 0;
 	bool success = true;
@@ -892,6 +907,7 @@ bool AllocateRegion(_In_ RegionType regionType, _Inout_ VmState* state) {
 * Returns:
 * @rsp [UINT64] -- The RSP for the current guest.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 UINT64 GetCurrentGuestRsp() {
 	return GuestState[KeGetCurrentProcessorNumber()].VmxoffState.GuestRsp;
 }
@@ -906,6 +922,7 @@ UINT64 GetCurrentGuestRsp() {
 * Returns:
 * @rip [UINT64] -- The RIP for the current guest.
 */
+_IRQL_requires_max_(HIGH_LEVEL)
 UINT64 GetCurrentGuestRip() {
 	return GuestState[KeGetCurrentProcessorNumber()].VmxoffState.GuestRip;
 }
@@ -923,6 +940,7 @@ UINT64 GetCurrentGuestRip() {
 * Returns:
 * There is no return value.
 */
+_IRQL_requires_(DISPATCH_LEVEL)
 void UnhookAllPagesDpc(_In_ KDPC* dpc, _In_opt_ PVOID deferredContext, _In_opt_ PVOID systemArgument1, _In_opt_ PVOID systemArgument2) {
 	UNREFERENCED_PARAMETER(dpc);
 	UNREFERENCED_PARAMETER(deferredContext);

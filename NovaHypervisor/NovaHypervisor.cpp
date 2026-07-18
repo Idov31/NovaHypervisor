@@ -1,6 +1,22 @@
 #include "pch.h"
 #include "NovaHypervisor.h"
 
+/*
+* Description:
+* DriverEntry initializes the driver device, shared services, and VMX virtualization.
+*
+* Parameters:
+* @DriverObject [_In_ PDRIVER_OBJECT] -- The driver object supplied by the I/O manager.
+* @RegistryPath [_In_ PUNICODE_STRING] -- The driver's registry path.
+*
+* Returns:
+* @status [NTSTATUS] -- STATUS_SUCCESS if initialization succeeds, otherwise an error status.
+*/
+
+extern "C"
+_Function_class_(DRIVER_INITIALIZE)
+_IRQL_requires_same_
+_IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING RegistryPath) {
 	UNREFERENCED_PARAMETER(RegistryPath);
 	UNICODE_STRING deviceName = { 0 };
@@ -94,6 +110,19 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	return status;
 }
 
+/*
+* Description:
+* NovaUnload terminates virtualization and releases the driver's device resources.
+*
+* Parameters:
+* @DriverObject [_In_ PDRIVER_OBJECT] -- The driver object being unloaded.
+*
+* Returns:
+* There is no return value.
+*/
+_Function_class_(DRIVER_UNLOAD)
+_IRQL_requires_(PASSIVE_LEVEL)
+_IRQL_requires_same_
 void NovaUnload(_In_ PDRIVER_OBJECT DriverObject) {
 	UNICODE_STRING symLinkName = { 0 };
 	TerminateVmx();
@@ -120,7 +149,10 @@ void NovaUnload(_In_ PDRIVER_OBJECT DriverObject) {
 * Returns:
 * @status		[NTSTATUS]		 -- Always will be STATUS_SUCCESS.
 */
-NTSTATUS NovaCreateClose(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
+_Function_class_(DRIVER_DISPATCH)
+_IRQL_requires_max_(DISPATCH_LEVEL)
+_IRQL_requires_same_
+NTSTATUS NovaCreateClose(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp) {
 	UNREFERENCED_PARAMETER(DeviceObject);
 	Irp->IoStatus.Status = STATUS_SUCCESS;
 	Irp->IoStatus.Information = 0;

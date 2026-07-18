@@ -1,6 +1,17 @@
 #include "pch.h"
 #include "RegistersHandler.h"
 
+/*
+* Description:
+* IsHyperVSyntheticMsr checks whether an MSR belongs to Hyper-V's synthetic MSR range.
+*
+* Parameters:
+* @msr [_In_ ULONG64] -- The MSR index to inspect.
+*
+* Returns:
+* @synthetic [bool] -- True if the MSR is synthetic, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool RegistersHandler::IsHyperVSyntheticMsr(_In_ ULONG64 msr) {
 	switch (msr) {
 	case HV_X64_MSR_GUEST_OS_ID:
@@ -42,6 +53,17 @@ bool RegistersHandler::IsHyperVSyntheticMsr(_In_ ULONG64 msr) {
 * Returns:
 * Returns true if the MSR is valid, otherwise false.
 */
+/*
+* Description:
+* IsValidMsr checks whether an MSR index can be accessed by RDMSR or WRMSR.
+*
+* Parameters:
+* @rcx [_In_ ULONG64] -- The guest-supplied MSR index.
+*
+* Returns:
+* @valid [bool] -- True if the MSR index is architecturally valid, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool RegistersHandler::IsValidMsr(_In_ ULONG64 rcx) {
 	return rcx <= 0x00001FFF || (rcx >= 0xC0000000 && rcx <= 0xC0001FFF) ||
 		IsHyperVSyntheticMsr(rcx);
@@ -57,6 +79,17 @@ bool RegistersHandler::IsValidMsr(_In_ ULONG64 rcx) {
 * Returns:
 * There is no return value
 */
+/*
+* Description:
+* HandleCRAccess emulates a guest control-register access.
+*
+* Parameters:
+* @guestRegisters [_In_ PGUEST_REGS] -- The saved guest register state.
+*
+* Returns:
+* @handled [bool] -- True if the access was emulated, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool RegistersHandler::HandleCRAccess(_In_ PGUEST_REGS guestRegisters) {
 	SIZE_T exitQualification = 0;
 	__vmx_vmread(EXIT_QUALIFICATION, &exitQualification);
@@ -141,6 +174,17 @@ bool RegistersHandler::HandleCRAccess(_In_ PGUEST_REGS guestRegisters) {
 * Returns:
 * There is no return value
 */
+/*
+* Description:
+* HandleMSRRead emulates a guest RDMSR instruction.
+*
+* Parameters:
+* @guestRegisters [_Inout_ PGUEST_REGS] -- The guest register state to read and update.
+*
+* Returns:
+* @handled [bool] -- True if the read was emulated, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool RegistersHandler::HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters) {
 	MSR msr = { 0 };
 
@@ -174,6 +218,17 @@ bool RegistersHandler::HandleMSRRead(_Inout_ PGUEST_REGS guestRegisters) {
 * Returns:
 * There is no return value
 */
+/*
+* Description:
+* HandleMSRWrite emulates a guest WRMSR instruction.
+*
+* Parameters:
+* @guestRegisters [_In_ PGUEST_REGS] -- The saved guest register state.
+*
+* Returns:
+* @handled [bool] -- True if the write was emulated, otherwise false.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool RegistersHandler::HandleMSRWrite(_In_ PGUEST_REGS guestRegisters) {
 	// Hyper-V synthetic MSRs - pass through transparently to the real hypervisor (TLFS 2.4)
 	if (IsHyperVSyntheticMsr(guestRegisters->rcx)) {
@@ -206,6 +261,17 @@ bool RegistersHandler::HandleMSRWrite(_In_ PGUEST_REGS guestRegisters) {
 * Returns:
 * There is no return value.
 */
+/*
+* Description:
+* HandleCpuid emulates CPUID and exposes the hypervisor interface leaves.
+*
+* Parameters:
+* @guestRegisters [_Inout_ PGUEST_REGS] -- The guest register state to read and update.
+*
+* Returns:
+* @handled [bool] -- True when CPUID was emulated.
+*/
+_IRQL_requires_max_(HIGH_LEVEL)
 bool RegistersHandler::HandleCpuid(_Inout_ PGUEST_REGS guestRegisters) {
 	int cpuInfo[4] = { 0 };
 

@@ -16,7 +16,8 @@ public:
 
 	static constexpr USHORT DefaultPort = static_cast<USHORT>(Port::Com2);
 
-	ComLogger() noexcept = default;
+	_IRQL_requires_max_(HIGH_LEVEL)
+	ComLogger() noexcept;
 
 	_IRQL_requires_max_(HIGH_LEVEL)
 	void Initialize(_In_ USHORT port = DefaultPort) noexcept;
@@ -62,23 +63,29 @@ private:
 	_IRQL_requires_max_(HIGH_LEVEL)
 	void ReleaseWriteLock() noexcept;
 
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void AppendChar(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize,
 		_Inout_ SIZE_T& offset, _In_ char value) const noexcept;
 
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void AppendString(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize,
 		_Inout_ SIZE_T& offset, _In_reads_or_z_(maximumLength) const char* value,
 		_In_ SIZE_T maximumLength) const noexcept;
 
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void AppendUnsigned(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize,
 		_Inout_ SIZE_T& offset, _In_ UINT64 value, _In_ ULONG radix,
 		_In_ bool uppercase) const noexcept;
 
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void AppendSigned(_Inout_updates_(bufferSize) char* buffer, _In_ SIZE_T bufferSize,
 		_Inout_ SIZE_T& offset, _In_ INT64 value) const noexcept;
 
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void FormatMessage(_Out_writes_z_(bufferSize) char* buffer, _In_ SIZE_T bufferSize,
 		_In_z_ const char* format, _In_ va_list args) const noexcept;
 
+	_IRQL_requires_max_(HIGH_LEVEL)
 	const char* PrefixForLevel(_In_ Level level) const noexcept;
 
 	volatile USHORT port_ = DefaultPort;

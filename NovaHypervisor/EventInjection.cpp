@@ -16,6 +16,7 @@ namespace EventHandler {
 	* Returns:
 	* @isSoftwareEvent [bool]				  -- True if the event is software-delivered.
 	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	bool IsSoftwareEvent(_In_ INTERRUPT_TYPE interruptionType) {
 		return interruptionType == INTERRUPT_TYPE_SOFTWARE_INTERRUPT ||
 			interruptionType == INTERRUPT_TYPE_PRIVILEGED_SOFTWARE_INTERRUPT ||
@@ -32,6 +33,7 @@ namespace EventHandler {
 	* Returns:
 	* There is no return value.
 	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void ClearPendingInjection() {
 		__vmx_vmwrite(VM_ENTRY_INTR_INFO_FIELD, 0);
 		__vmx_vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE, 0);
@@ -48,6 +50,7 @@ namespace EventHandler {
 	* Returns:
 	* There is no return value.
 	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void SetupInstructionLength() {
 		SIZE_T exitInstractionLength = 0;
 		__vmx_vmread(VM_EXIT_INSTRUCTION_LEN, &exitInstractionLength);
@@ -64,6 +67,7 @@ namespace EventHandler {
 	* Returns:
 	* @bool -- True if the event was reinjected, otherwise false.
 	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	bool ReinjectEventFromIdtVectoring() {
 		SIZE_T vmEntryInfo = 0;
 		SIZE_T idtVectoringInfo = 0;
@@ -89,7 +93,7 @@ namespace EventHandler {
 	}
 
 	/*
-	* Description
+	* Description:
 	* InjectEventFromVmExitInterruption is responsible for injecting an event from VM-exit interruption information.
 	* 
 	* Parameters:
@@ -98,6 +102,7 @@ namespace EventHandler {
 	* Returns:
 	* @bool										  -- True if the event was injected, otherwise false.
 	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	bool InjectEventFromVmExitInterruption(_In_ VMEXIT_INTERRUPT_INFO interruptExit) {
 		if (!interruptExit.Valid)
 			return false;
@@ -135,6 +140,7 @@ namespace EventHandler {
 	* Returns:
 	* There is no return value.
 	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void InjectInterruption(_In_ INTERRUPT_TYPE interruptionType, 
 		_In_ EXCEPTION_VECTORS vector, 
 		_In_ bool deliverErrorCode,
@@ -166,6 +172,7 @@ namespace EventHandler {
 	* Returns:
 	* There is no return value.
 	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void InjectBreakpoint() {
 		InjectInterruption(INTERRUPT_TYPE_SOFTWARE_EXCEPTION, EXCEPTION_VECTOR_BREAKPOINT, false, 0);
 		SetupInstructionLength();
@@ -181,6 +188,7 @@ namespace EventHandler {
 	* Returns:
 	* There is no return value.
 	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void InjectGeneralProtection() {
 		InjectInterruption(INTERRUPT_TYPE_HARDWARE_EXCEPTION, EXCEPTION_VECTOR_GENERAL_PROTECTION_FAULT, true, 0);
 	}
@@ -195,6 +203,7 @@ namespace EventHandler {
 	* Returns:
 	* There is no return value.
 	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void InjectUndefinedOpcode() {
 		InjectInterruption(INTERRUPT_TYPE_HARDWARE_EXCEPTION, EXCEPTION_VECTOR_UNDEFINED_OPCODE, false, 0);
 	}
@@ -209,6 +218,7 @@ namespace EventHandler {
 	* Returns:
 	* There is no return value.
 	*/
+	_IRQL_requires_max_(HIGH_LEVEL)
 	void InjectPageFault(_In_ ULONG64 faultAddress, _In_ ULONG32 errorCode) {
 		__writecr2(faultAddress);
 		InjectInterruption(INTERRUPT_TYPE_HARDWARE_EXCEPTION, EXCEPTION_VECTOR_PAGE_FAULT, true, errorCode);
